@@ -4,6 +4,7 @@ in vec3 world_pos;
 in vec3 world_normal;
 in vec4 light_pos;
 in vec3 base_color;
+in vec2 base_texcoord;
 
 out vec4 color;
 
@@ -11,6 +12,7 @@ uniform vec3 sun_direction;
 uniform float sun_distance_mkm;
 uniform vec3 camera_position;
 uniform sampler2D shadow_map;
+uniform sampler2D diffuse_map;
 uniform vec4 environment_settings;
 
 #include "lighting/lumen_proxy.glsl"
@@ -84,14 +86,15 @@ void main()
   vec3 view_dir = normalize(camera_position - world_pos);
   float fresnel = pow(clamp(1.0 - max(dot(view_dir, normal), 0.0), 0.0, 1.0), 2.0);
   vec3 rim = mix(vec3(0.01, 0.02, 0.04), vec3(0.05, 0.08, 0.06), daylight) * fresnel * (0.16 + 0.24 * daylight);
+  vec3 albedo = base_color * texture(diffuse_map, base_texcoord).rgb;
   vec3 lumen_proxy =
     lighting_lumen_skylight(normal, daylight, shadow) +
-    lighting_lumen_ground_bounce(base_color, normal, sun_color, daylight) +
+    lighting_lumen_ground_bounce(albedo, normal, sun_color, daylight) +
     lighting_lumen_sun_bounce(normal, light_dir, sun_color, daylight, shadow);
-  vec3 lit = base_color * (ambient + rim + lumen_proxy + sun_color * direct * shadow * (0.09 + daylight * 0.40) * sun_energy);
+  vec3 lit = albedo * (ambient + rim + lumen_proxy + sun_color * direct * shadow * (0.09 + daylight * 0.40) * sun_energy);
 
-  lit += base_color * sun_color * direct * (1.0 - shadow) * 0.020 * sun_energy;
-  lit += base_color * vec3(0.06, 0.08, 0.12) * moonlight * (0.25 + 0.75 * max(normal.y, 0.0));
+  lit += albedo * sun_color * direct * (1.0 - shadow) * 0.020 * sun_energy;
+  lit += albedo * vec3(0.06, 0.08, 0.12) * moonlight * (0.25 + 0.75 * max(normal.y, 0.0));
   lit = mix(lit, haze_color, clamp(haze * (0.03 + fog_density * 0.08) + far_blend * (0.02 + fog_density * 0.10), 0.0, 0.38));
   color = vec4(max(lit, vec3(0.0)), 1.0);
 }

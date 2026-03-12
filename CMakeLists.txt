@@ -45,6 +45,7 @@ if(EMSCRIPTEN)
     engine_core_wasm
     block_world.c
     terrain.c
+    web_scene_service.c
     web_bridge.c
   )
 
@@ -69,9 +70,17 @@ if(EMSCRIPTEN)
       "-Wl,--export=free"
       "-Wl,--export=engine_web_reset_state"
       "-Wl,--export=engine_web_set_terrain_profile"
+      "-Wl,--export=engine_web_set_foliage_profile"
       "-Wl,--export=engine_web_fill_height_buffer"
+      "-Wl,--export=engine_web_get_height_at"
+      "-Wl,--export=engine_web_get_terrain_vertex_count"
+      "-Wl,--export=engine_web_get_terrain_index_count"
+      "-Wl,--export=engine_web_copy_terrain_vertices"
       "-Wl,--export=engine_web_get_block_count"
       "-Wl,--export=engine_web_copy_blocks"
+      "-Wl,--export=engine_web_copy_block_instances"
+      "-Wl,--export=engine_web_get_foliage_capacity"
+      "-Wl,--export=engine_web_copy_foliage_instances"
       "-Wl,--export=engine_web_place_block_column"
       "-Wl,--export=engine_web_remove_block_column"
       "-Wl,--export=engine_web_describe_state"

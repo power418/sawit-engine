@@ -160,6 +160,7 @@ int renderer_create(Renderer* renderer, int width, int height)
   renderer->palm_sun_distance_location = glGetUniformLocation(renderer->palm_program, "sun_distance_mkm");
   renderer->palm_camera_position_location = glGetUniformLocation(renderer->palm_program, "camera_position");
   renderer->palm_shadow_map_location = glGetUniformLocation(renderer->palm_program, "shadow_map");
+  renderer->palm_diffuse_map_location = glGetUniformLocation(renderer->palm_program, "diffuse_map");
   renderer->palm_environment_location = glGetUniformLocation(renderer->palm_program, "environment_settings");
   renderer->palm_shadow_light_view_projection_location = glGetUniformLocation(renderer->palm_shadow_program, "light_vp");
   renderer->shadow_light_view_projection_location = glGetUniformLocation(renderer->shadow_program, "light_vp");
@@ -189,6 +190,10 @@ int renderer_create(Renderer* renderer, int width, int height)
   if (renderer->palm_shadow_map_location >= 0)
   {
     glUniform1i(renderer->palm_shadow_map_location, 2);
+  }
+  if (renderer->palm_diffuse_map_location >= 0)
+  {
+    glUniform1i(renderer->palm_diffuse_map_location, 3);
   }
   glUseProgram(0);
 
@@ -417,6 +422,9 @@ void renderer_render(
   }
   palm_render_draw(&renderer->palm_mesh);
   tree_render_draw(&renderer->tree_mesh);
+  glDisable(GL_CULL_FACE);
+  grass_render_draw(&renderer->grass_mesh);
+  glEnable(GL_CULL_FACE);
 
   glDisable(GL_POLYGON_OFFSET_FILL);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

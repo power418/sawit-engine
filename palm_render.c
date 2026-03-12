@@ -26,6 +26,7 @@ typedef struct PalmVertex
   float position[3];
   float normal[3];
   float color[3];
+  float texcoord[2];
 } PalmVertex;
 
 typedef struct PalmColor
@@ -34,6 +35,12 @@ typedef struct PalmColor
   float g;
   float b;
 } PalmColor;
+
+typedef struct PalmVec2
+{
+  float x;
+  float y;
+} PalmVec2;
 
 typedef struct PalmVec3
 {
@@ -60,6 +67,8 @@ typedef struct PalmMaterial
   char name[64];
   PalmColor diffuse;
   int has_diffuse;
+  char texture_path[PLATFORM_PATH_MAX];
+  int has_texture;
 } PalmMaterial;
 
 typedef struct PalmRenderAssetSpec
@@ -81,6 +90,13 @@ typedef struct PalmVec3Array
   size_t count;
   size_t capacity;
 } PalmVec3Array;
+
+typedef struct PalmVec2Array
+{
+  PalmVec2* data;
+  size_t count;
+  size_t capacity;
+} PalmVec2Array;
 
 typedef struct PalmVertexArray
 {
@@ -124,9 +140,12 @@ static const char* palm_render_skip_spaces_const(const char* text);
 static const char* palm_render_match_keyword(const char* text, const char* keyword);
 static int palm_render_reserve_memory(void** buffer, size_t* capacity, size_t required, size_t element_size);
 static int palm_render_push_vec3(PalmVec3Array* array, PalmVec3 value);
+static int palm_render_push_vec2(PalmVec2Array* array, PalmVec2 value);
 static int palm_render_push_vertex(PalmVertexArray* array, PalmVertex value);
 static int palm_render_path_uses_black_key(const char* path);
 static int palm_render_estimate_texture_color(const char* texture_path, PalmColor* out_color);
+static int palm_render_create_texture_from_file(const char* texture_path, GLuint* out_texture);
+static int palm_render_create_solid_texture(PalmColor color, GLuint* out_texture);
 static int palm_render_material_needs_texture_color(const PalmMaterial* material);
 static PalmMaterial* palm_render_find_material_mutable(PalmMaterialArray* materials, const char* name);
 static PalmMaterial* palm_render_push_material(PalmMaterialArray* array, const char* name);
@@ -139,7 +158,13 @@ static PalmVec3 palm_render_vec3_subtract(PalmVec3 a, PalmVec3 b);
 static PalmVec3 palm_render_vec3_cross(PalmVec3 a, PalmVec3 b);
 static float palm_render_vec3_dot(PalmVec3 a, PalmVec3 b);
 static PalmVec3 palm_render_vec3_normalize(PalmVec3 value);
-static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVertex** out_vertices, GLsizei* out_vertex_count, float* out_model_height);
+static int palm_render_load_model_vertices(
+  const char* relative_obj_path,
+  PalmVertex** out_vertices,
+  GLsizei* out_vertex_count,
+  float* out_model_height,
+  char* out_diffuse_texture_path,
+  size_t out_diffuse_texture_path_size);
 static int palm_render_create_variant(PalmRenderVariant* variant, const PalmRenderAssetSpec* asset_spec);
 static void palm_render_destroy_variant(PalmRenderVariant* variant);
 static int palm_render_reserve_instances(PalmRenderVariant* variant, size_t required_instance_capacity);
@@ -239,6 +264,7 @@ static int palm_render_create_variant(PalmRenderVariant* variant, const PalmRend
   PalmVertex* vertices = NULL;
   GLsizei vertex_count = 0;
   float model_height = 1.0f;
+  char diffuse_texture_path[PLATFORM_PATH_MAX] = { 0 };
   int column = 0;
 
   if (variant == NULL || asset_spec == NULL || asset_spec->relative_obj_path == NULL)
@@ -247,7 +273,13 @@ static int palm_render_create_variant(PalmRenderVariant* variant, const PalmRend
   }
 
   memset(variant, 0, sizeof(*variant));
-  if (!palm_render_load_model_vertices(asset_spec->relative_obj_path, &vertices, &vertex_count, &model_height))
+  if (!palm_render_load_model_vertices(
+    asset_spec->relative_obj_path,
+    &vertices,
+    &vertex_count,
+    &model_height,
+    diffuse_texture_path,
+    sizeof(diffuse_texture_path)))
   {
     return 0;
   }
@@ -273,6 +305,31 @@ static int palm_render_create_variant(PalmRenderVariant* variant, const PalmRend
   variant->embed_depth_min = asset_spec->embed_depth_min;
   variant->embed_depth_max = asset_spec->embed_depth_max;
   variant->slope_limit = asset_spec->slope_limit;
+  if (diffuse_texture_path[0] != '\0')
+  {
+    if (!palm_render_create_texture_from_file(diffuse_texture_path, &variant->diffuse_texture))
+    {
+      diagnostics_logf(
+        "palm_render: failed to load diffuse texture '%s' for %s, using solid fallback",
+        diffuse_texture_path,
+        asset_spec->relative_obj_path);
+    }
+    else
+    {
+      diagnostics_logf(
+        "palm_render: using diffuse texture '%s' for %s",
+        diffuse_texture_path,
+        asset_spec->relative_obj_path);
+    }
+  }
+  if (variant->diffuse_texture == 0U &&
+    !palm_render_create_solid_texture((PalmColor){ 1.0f, 1.0f, 1.0f }, &variant->diffuse_texture))
+  {
+    free(vertices);
+    palm_render_destroy_variant(variant);
+    palm_render_show_error("Palm Error", "Failed to allocate palm fallback texture.");
+    return 0;
+  }
 
   glBindVertexArray(variant->vao);
 
@@ -284,6 +341,8 @@ static int palm_render_create_variant(PalmRenderVariant* variant, const PalmRend
   glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PalmVertex), (const void*)offsetof(PalmVertex, normal));
   glEnableVertexAttribArray(2);
   glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(PalmVertex), (const void*)offsetof(PalmVertex, color));
+  glEnableVertexAttribArray(8);
+  glVertexAttribPointer(8, 2, GL_FLOAT, GL_FALSE, sizeof(PalmVertex), (const void*)offsetof(PalmVertex, texcoord));
 
   glBindBuffer(GL_ARRAY_BUFFER, variant->instance_buffer);
   glBufferData(GL_ARRAY_BUFFER, 0, NULL, GL_DYNAMIC_DRAW);
@@ -322,6 +381,11 @@ static void palm_render_destroy_variant(PalmRenderVariant* variant)
   {
     glDeleteBuffers(1, &variant->vertex_buffer);
     variant->vertex_buffer = 0U;
+  }
+  if (variant->diffuse_texture != 0U)
+  {
+    glDeleteTextures(1, &variant->diffuse_texture);
+    variant->diffuse_texture = 0U;
   }
   if (variant->vao != 0U)
   {
@@ -450,9 +514,14 @@ void palm_render_draw(const PalmRenderMesh* mesh)
       continue;
     }
 
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, variant->diffuse_texture);
     glBindVertexArray(variant->vao);
     glDrawArraysInstanced(GL_TRIANGLES, 0, variant->vertex_count, variant->instance_count);
   }
+  glActiveTexture(GL_TEXTURE3);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glActiveTexture(GL_TEXTURE0);
   glBindVertexArray(0);
 }
 
@@ -856,6 +925,85 @@ static int palm_render_estimate_texture_color(const char* texture_path, PalmColo
   return 1;
 }
 
+static int palm_render_create_texture_from_file(const char* texture_path, GLuint* out_texture)
+{
+  unsigned char* pixels = NULL;
+  int width = 0;
+  int height = 0;
+  int source_channels = 0;
+  GLuint texture = 0U;
+
+  if (texture_path == NULL || out_texture == NULL)
+  {
+    return 0;
+  }
+
+  *out_texture = 0U;
+  pixels = stbi_load(texture_path, &width, &height, &source_channels, 4);
+  if (pixels == NULL || width <= 0 || height <= 0)
+  {
+    if (pixels != NULL)
+    {
+      stbi_image_free(pixels);
+    }
+    return 0;
+  }
+
+  glGenTextures(1, &texture);
+  if (texture == 0U)
+  {
+    stbi_image_free(pixels);
+    return 0;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  stbi_image_free(pixels);
+  *out_texture = texture;
+  return 1;
+}
+
+static int palm_render_create_solid_texture(PalmColor color, GLuint* out_texture)
+{
+  const unsigned char rgba[4] = {
+    (unsigned char)(palm_render_clamp(color.r, 0.0f, 1.0f) * 255.0f + 0.5f),
+    (unsigned char)(palm_render_clamp(color.g, 0.0f, 1.0f) * 255.0f + 0.5f),
+    (unsigned char)(palm_render_clamp(color.b, 0.0f, 1.0f) * 255.0f + 0.5f),
+    255U
+  };
+  GLuint texture = 0U;
+
+  if (out_texture == NULL)
+  {
+    return 0;
+  }
+
+  *out_texture = 0U;
+  glGenTextures(1, &texture);
+  if (texture == 0U)
+  {
+    return 0;
+  }
+
+  glBindTexture(GL_TEXTURE_2D, texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+  glBindTexture(GL_TEXTURE_2D, 0);
+
+  *out_texture = texture;
+  return 1;
+}
+
 static int palm_render_material_needs_texture_color(const PalmMaterial* material)
 {
   float min_channel = 0.0f;
@@ -940,6 +1088,18 @@ static int palm_render_push_vec3(PalmVec3Array* array, PalmVec3 value)
   return 1;
 }
 
+static int palm_render_push_vec2(PalmVec2Array* array, PalmVec2 value)
+{
+  if (array == NULL || !palm_render_reserve_memory((void**)&array->data, &array->capacity, array->count + 1U, sizeof(PalmVec2)))
+  {
+    return 0;
+  }
+
+  array->data[array->count] = value;
+  array->count += 1U;
+  return 1;
+}
+
 static int palm_render_push_vertex(PalmVertexArray* array, PalmVertex value)
 {
   if (array == NULL || !palm_render_reserve_memory((void**)&array->data, &array->capacity, array->count + 1U, sizeof(PalmVertex)))
@@ -967,6 +1127,8 @@ static PalmMaterial* palm_render_push_material(PalmMaterialArray* array, const c
   (void)snprintf(material->name, sizeof(material->name), "%s", name);
   material->diffuse = (PalmColor){ 0.70f, 0.70f, 0.70f };
   material->has_diffuse = 0;
+  material->texture_path[0] = '\0';
+  material->has_texture = 0;
   array->count += 1U;
   return material;
 }
@@ -1097,12 +1259,16 @@ static int palm_render_parse_mtl(const char* mtl_path, PalmMaterialArray* materi
 
       (void)snprintf(relative_name, sizeof(relative_name), "%s", argument);
       palm_render_trim_right_in_place(relative_name);
-      if (palm_render_material_needs_texture_color(current_material) &&
-        palm_render_resolve_material_asset_path(mtl_path, relative_name, texture_path, sizeof(texture_path)) &&
-        palm_render_estimate_texture_color(texture_path, &texture_color))
+      if (palm_render_resolve_material_asset_path(mtl_path, relative_name, texture_path, sizeof(texture_path)))
       {
-        current_material->diffuse = texture_color;
-        current_material->has_diffuse = 1;
+        (void)snprintf(current_material->texture_path, sizeof(current_material->texture_path), "%s", texture_path);
+        current_material->has_texture = 1;
+        if (palm_render_material_needs_texture_color(current_material) &&
+          palm_render_estimate_texture_color(texture_path, &texture_color))
+        {
+          current_material->diffuse = texture_color;
+          current_material->has_diffuse = 1;
+        }
       }
     }
   }
@@ -1238,19 +1404,29 @@ static PalmVec3 palm_render_vec3_normalize(PalmVec3 value)
   }
 }
 
-static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVertex** out_vertices, GLsizei* out_vertex_count, float* out_model_height)
+static int palm_render_load_model_vertices(
+  const char* relative_obj_path,
+  PalmVertex** out_vertices,
+  GLsizei* out_vertex_count,
+  float* out_model_height,
+  char* out_diffuse_texture_path,
+  size_t out_diffuse_texture_path_size)
 {
   char obj_path[PLATFORM_PATH_MAX] = { 0 };
+  char selected_texture_path[PLATFORM_PATH_MAX] = { 0 };
   char* source = NULL;
   char* cursor = NULL;
   PalmVec3Array positions = { 0 };
   PalmVec3Array normals = { 0 };
+  PalmVec2Array texcoords = { 0 };
   PalmVertexArray vertices = { 0 };
   PalmMaterialArray materials = { 0 };
   PalmColor current_color = { 0.45f, 0.35f, 0.20f };
+  const PalmMaterial* current_material = NULL;
   PalmVec3 bounds_min = { 1.0e9f, 1.0e9f, 1.0e9f };
   PalmVec3 bounds_max = { -1.0e9f, -1.0e9f, -1.0e9f };
   PalmVec3 base_center = { 0.0f, 0.0f, 0.0f };
+  int texture_selection_valid = 1;
   size_t base_count = 0U;
   size_t i = 0U;
 
@@ -1261,6 +1437,10 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
   *out_vertices = NULL;
   *out_vertex_count = 0;
   *out_model_height = 1.0f;
+  if (out_diffuse_texture_path != NULL && out_diffuse_texture_path_size > 0U)
+  {
+    out_diffuse_texture_path[0] = '\0';
+  }
 
   if (!palm_render_resolve_asset_path(relative_obj_path, obj_path, sizeof(obj_path)) ||
     !palm_render_load_text_file(obj_path, "OBJ", &source))
@@ -1330,12 +1510,11 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
     else if ((argument = palm_render_match_keyword(trimmed, "usemtl")) != NULL)
     {
       char material_name[64] = { 0 };
-      const PalmMaterial* material = NULL;
 
       (void)snprintf(material_name, sizeof(material_name), "%s", argument);
       palm_render_trim_right_in_place(material_name);
-      material = palm_render_find_material(&materials, material_name);
-      current_color = (material != NULL) ? material->diffuse : (PalmColor){ 0.70f, 0.70f, 0.70f };
+      current_material = palm_render_find_material(&materials, material_name);
+      current_color = (current_material != NULL) ? current_material->diffuse : (PalmColor){ 0.70f, 0.70f, 0.70f };
     }
     else if (strncmp(trimmed, "v ", 2U) == 0)
     {
@@ -1349,6 +1528,25 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
           free(vertices.data);
           free(positions.data);
           free(normals.data);
+          free(texcoords.data);
+          free(materials.data);
+          return 0;
+        }
+      }
+    }
+    else if (strncmp(trimmed, "vt ", 3U) == 0)
+    {
+      PalmVec2 value = { 0.0f, 0.0f };
+      if (palm_render_sscanf(trimmed + 3, "%f %f", &value.x, &value.y) >= 2)
+      {
+        if (!palm_render_push_vec2(&texcoords, value))
+        {
+          palm_render_show_error("Memory Error", "Failed to store palm OBJ texcoords.");
+          free(source);
+          free(vertices.data);
+          free(positions.data);
+          free(normals.data);
+          free(texcoords.data);
           free(materials.data);
           return 0;
         }
@@ -1366,6 +1564,7 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
           free(vertices.data);
           free(positions.data);
           free(normals.data);
+          free(texcoords.data);
           free(materials.data);
           return 0;
         }
@@ -1422,7 +1621,36 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
           };
           PalmVec3 triangle_positions[3];
           PalmVec3 triangle_normal = { 0.0f, 1.0f, 0.0f };
+          PalmVec2 triangle_texcoords[3] = {
+            { 0.0f, 0.0f },
+            { 0.0f, 0.0f },
+            { 0.0f, 0.0f }
+          };
+          const int material_has_texture = (
+            current_material != NULL &&
+            current_material->has_texture != 0 &&
+            current_material->texture_path[0] != '\0' &&
+            !palm_render_path_uses_black_key(current_material->texture_path));
           int vertex_index = 0;
+
+          if (texture_selection_valid)
+          {
+            if (material_has_texture)
+            {
+              if (selected_texture_path[0] == '\0')
+              {
+                (void)snprintf(selected_texture_path, sizeof(selected_texture_path), "%s", current_material->texture_path);
+              }
+              else if (strcmp(selected_texture_path, current_material->texture_path) != 0)
+              {
+                texture_selection_valid = 0;
+              }
+            }
+            else
+            {
+              texture_selection_valid = 0;
+            }
+          }
 
           for (vertex_index = 0; vertex_index < 3; ++vertex_index)
           {
@@ -1434,11 +1662,24 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
               free(vertices.data);
               free(positions.data);
               free(normals.data);
+              free(texcoords.data);
               free(materials.data);
               return 0;
             }
 
             triangle_positions[vertex_index] = positions.data[resolved_position];
+            if (material_has_texture && texture_selection_valid)
+            {
+              const int resolved_texcoord = palm_render_resolve_obj_index(triangle[vertex_index].texcoord_index, texcoords.count);
+              if (resolved_texcoord < 0)
+              {
+                texture_selection_valid = 0;
+              }
+              else
+              {
+                triangle_texcoords[vertex_index] = texcoords.data[resolved_texcoord];
+              }
+            }
           }
 
           triangle_normal = palm_render_vec3_normalize(
@@ -1453,7 +1694,8 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
             PalmVertex vertex = {
               { triangle_positions[vertex_index].x, triangle_positions[vertex_index].y, triangle_positions[vertex_index].z },
               { normal.x, normal.y, normal.z },
-              { current_color.r, current_color.g, current_color.b }
+              { current_color.r, current_color.g, current_color.b },
+              { triangle_texcoords[vertex_index].x, 1.0f - triangle_texcoords[vertex_index].y }
             };
 
             if (!palm_render_push_vertex(&vertices, vertex))
@@ -1463,6 +1705,7 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
               free(vertices.data);
               free(positions.data);
               free(normals.data);
+              free(texcoords.data);
               free(materials.data);
               return 0;
             }
@@ -1479,6 +1722,7 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
     free(vertices.data);
     free(positions.data);
     free(normals.data);
+    free(texcoords.data);
     free(materials.data);
     return 0;
   }
@@ -1538,16 +1782,25 @@ static int palm_render_load_model_vertices(const char* relative_obj_path, PalmVe
   *out_vertices = vertices.data;
   *out_vertex_count = (GLsizei)vertices.count;
   *out_model_height = palm_render_clamp(bounds_max.y - bounds_min.y, 1.0f, 10000.0f);
+  if (out_diffuse_texture_path != NULL &&
+    out_diffuse_texture_path_size > 0U &&
+    texture_selection_valid &&
+    selected_texture_path[0] != '\0')
+  {
+    (void)snprintf(out_diffuse_texture_path, out_diffuse_texture_path_size, "%s", selected_texture_path);
+  }
 
   diagnostics_logf(
-    "palm_render: loaded OBJ vertices=%d height=%.2f source=%s",
+    "palm_render: loaded OBJ vertices=%d height=%.2f textured=%s source=%s",
     (int)*out_vertex_count,
     *out_model_height,
+    (texture_selection_valid && selected_texture_path[0] != '\0') ? "yes" : "no",
     obj_path);
 
   free(source);
   free(positions.data);
   free(normals.data);
+  free(texcoords.data);
   free(materials.data);
   return 1;
 }

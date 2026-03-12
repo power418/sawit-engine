@@ -25,6 +25,7 @@ typedef struct PalmRenderVariant
   GLuint vao;
   GLuint vertex_buffer;
   GLuint instance_buffer;
+  GLuint diffuse_texture;
   GLsizei vertex_count;
   GLsizei instance_count;
   void* cpu_instances;
