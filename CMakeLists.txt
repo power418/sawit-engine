@@ -6,8 +6,8 @@ endif()
 
 project(opengl_sky LANGUAGES C)
 
-if(NOT WIN32)
-  message(FATAL_ERROR "This project currently supports the Win32 renderer only.")
+if(APPLE)
+  enable_language(OBJCXX)
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -61,17 +61,18 @@ if(NOT OPENGL_SKY_GLEW_TARGET)
 endif()
 
 set(OPENGL_SKY_SOURCES
-  console_overlay.c
-  diagnostics.c
-  gpu_preferences.c
-  main.c
   app.c
   block_render.c
   block_world.c
-  keymap.c
+  console_overlay.c
+  diagnostics.c
+  grass_render.c
+  graphics_backend.c
+  gpu_preferences.c
   math3d.c
+  main.c
   palm_render.c
-  platform_win32.c
+  platform_support.c
   player_controller.c
   procedural_lod.c
   render_quality.c
@@ -79,7 +80,21 @@ set(OPENGL_SKY_SOURCES
   stats_overlay.c
   system_monitor.c
   terrain.c
+  tree_render.c
 )
+
+if(WIN32)
+  list(APPEND OPENGL_SKY_SOURCES
+    keymap.c
+    platform_win32.c
+  )
+elseif(APPLE)
+  list(APPEND OPENGL_SKY_SOURCES
+    platform_cocoa.mm
+  )
+else()
+  message(FATAL_ERROR "Unsupported platform. Only Win32 and macOS/Cocoa builds are configured.")
+endif()
 
 set(OPENGL_SKY_SHADER_SOURCES
   "${CMAKE_CURRENT_SOURCE_DIR}/shaders/sky.vert.glsl"
@@ -101,7 +116,11 @@ set(OPENGL_SKY_SHADER_SOURCES
   "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ui/blur_kawase.glsl"
 )
 
-add_executable(opengl_sky WIN32 ${OPENGL_SKY_SOURCES} ${OPENGL_SKY_SHADER_SOURCES})
+if(WIN32)
+  add_executable(opengl_sky WIN32 ${OPENGL_SKY_SOURCES} ${OPENGL_SKY_SHADER_SOURCES})
+else()
+  add_executable(opengl_sky ${OPENGL_SKY_SOURCES} ${OPENGL_SKY_SHADER_SOURCES})
+endif()
 
 target_include_directories(opengl_sky PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -116,12 +135,23 @@ target_link_libraries(
   PRIVATE
     ${OPENGL_SKY_GLEW_TARGET}
     OpenGL::GL
-    dxgi
-    dxguid
-    gdi32
-    pdh
-    user32
 )
+
+if(WIN32)
+  target_link_libraries(
+    opengl_sky
+    PRIVATE
+      dxgi
+      dxguid
+      gdi32
+      pdh
+      user32
+  )
+elseif(APPLE)
+  find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+  target_link_libraries(opengl_sky PRIVATE ${COCOA_FRAMEWORK})
+  target_compile_definitions(opengl_sky PRIVATE GL_SILENCE_DEPRECATION)
+endif()
 
 if(MSVC)
   target_compile_options(opengl_sky PRIVATE /W4)

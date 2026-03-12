@@ -37,19 +37,34 @@ static int platform_get_overlay_gpu_preference_rect(const PlatformApp* app, GpuP
 static OverlayToggleId platform_get_hovered_toggle(const PlatformApp* app, int x, int y);
 static OverlaySliderId platform_get_hovered_slider(const PlatformApp* app, int x, int y);
 static GpuPreferenceMode platform_get_hovered_gpu_preference(const PlatformApp* app, int x, int y);
+static int platform_utf8_to_wide(const char* text, wchar_t* out_text, size_t out_text_count);
 static void platform_toggle_value(PlatformApp* app, OverlayToggleId toggle_id);
 static void platform_set_slider_value(SceneSettings* settings, OverlaySliderId slider_id, float value);
 static void platform_adjust_overlay_scroll(PlatformApp* app, float delta);
 static void platform_update_overlay_interaction(PlatformApp* app, int has_focus);
 
-int platform_create(PlatformApp* app, HINSTANCE instance, int show_command, const wchar_t* title, int width, int height)
+int platform_create(PlatformApp* app, const char* title, int width, int height)
 {
   RECT window_rect = { 0, 0, width, height };
   RECT client_rect = { 0, 0, 0, 0 };
+  wchar_t wide_title[256] = { 0 };
+  HINSTANCE instance = GetModuleHandleW(NULL);
 
   memset(app, 0, sizeof(*app));
   app->instance = instance;
   diagnostics_log("platform_create: begin");
+
+  if (instance == NULL)
+  {
+    platform_show_error_message("Win32 Error", "Failed to resolve the current module handle.");
+    return 0;
+  }
+
+  if (!platform_utf8_to_wide((title != NULL) ? title : "OpenGL Sky", wide_title, sizeof(wide_title) / sizeof(wide_title[0])))
+  {
+    platform_show_error_message("Win32 Error", "Failed to convert the window title to UTF-16.");
+    return 0;
+  }
 
   if (!platform_register_window_class(instance))
   {
@@ -72,7 +87,7 @@ int platform_create(PlatformApp* app, HINSTANCE instance, int show_command, cons
   app->window = CreateWindowExW(
     0U,
     k_platform_window_class_name,
-    title,
+    wide_title,
     WS_OVERLAPPEDWINDOW | WS_VISIBLE,
     CW_USEDEFAULT,
     CW_USEDEFAULT,
@@ -202,7 +217,7 @@ int platform_create(PlatformApp* app, HINSTANCE instance, int show_command, cons
     (const char*)glGetString(GL_RENDERER),
     (const char*)glGetString(GL_VENDOR));
 
-  ShowWindow(app->window, show_command);
+  ShowWindow(app->window, SW_SHOWDEFAULT);
   UpdateWindow(app->window);
   (void)SetForegroundWindow(app->window);
   (void)SetActiveWindow(app->window);
@@ -1210,6 +1225,19 @@ static GpuPreferenceMode platform_get_hovered_gpu_preference(const PlatformApp* 
   }
 
   return (GpuPreferenceMode)-1;
+}
+
+static int platform_utf8_to_wide(const char* text, wchar_t* out_text, size_t out_text_count)
+{
+  const int converted_length = MultiByteToWideChar(
+    CP_UTF8,
+    0,
+    (text != NULL) ? text : "",
+    -1,
+    out_text,
+    (int)out_text_count);
+
+  return converted_length > 0;
 }
 
 static void platform_toggle_value(PlatformApp* app, OverlayToggleId toggle_id)

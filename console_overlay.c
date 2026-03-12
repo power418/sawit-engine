@@ -1,5 +1,40 @@
 #include "console_overlay.h"
 
+#if defined(__APPLE__)
+
+#include <string.h>
+
+int console_overlay_create(ConsoleOverlay* overlay)
+{
+  if (overlay == NULL)
+  {
+    return 0;
+  }
+
+  memset(overlay, 0, sizeof(*overlay));
+  return 1;
+}
+
+void console_overlay_destroy(ConsoleOverlay* overlay)
+{
+  if (overlay == NULL)
+  {
+    return;
+  }
+
+  memset(overlay, 0, sizeof(*overlay));
+}
+
+void console_overlay_render(ConsoleOverlay* overlay, int width, int height, const OverlayState* state)
+{
+  (void)overlay;
+  (void)width;
+  (void)height;
+  (void)state;
+}
+
+#else
+
 #include "diagnostics.h"
 
 #include <math.h>
@@ -1893,3 +1928,5 @@ static void console_overlay_format_slider_value(char* buffer, size_t buffer_size
       break;
   }
 }
+
+#endif

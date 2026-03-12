@@ -1,6 +1,7 @@
 #include "terrain.h"
 
 #include <math.h>
+#include <stddef.h>
 
 static TerrainRenderSamplingConfig g_terrain_render_sampling = { 0 };
 

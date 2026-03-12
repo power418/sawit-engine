@@ -5,11 +5,13 @@
 #include "block_world.h"
 #include "camera.h"
 #include "console_overlay.h"
+#include "grass_render.h"
 #include "gl_headers.h"
 #include "overlay_ui.h"
 #include "palm_render.h"
 #include "render_quality.h"
 #include "stats_overlay.h"
+#include "tree_render.h"
 
 typedef struct Renderer
 {
@@ -66,6 +68,8 @@ typedef struct Renderer
   GLint shadow_shape_location;
   GLint post_quality_location;
   PalmRenderMesh palm_mesh;
+  TreeRenderMesh tree_mesh;
+  GrassRenderMesh grass_mesh;
   ConsoleOverlay console_overlay;
   StatsOverlay stats_overlay;
   RendererQualityProfile quality;
@@ -77,7 +81,7 @@ typedef struct Renderer
   int framebuffer_height;
 } Renderer;
 
-int renderer_create(Renderer* renderer, HINSTANCE instance, int width, int height);
+int renderer_create(Renderer* renderer, int width, int height);
 void renderer_destroy(Renderer* renderer);
 int renderer_resize(Renderer* renderer, int width, int height);
 void renderer_render(

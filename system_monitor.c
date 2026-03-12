@@ -2,6 +2,8 @@
 
 #include "diagnostics.h"
 
+#if defined(_WIN32)
+
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
@@ -274,3 +276,37 @@ static void system_monitor_update_gpu(SystemMonitor* monitor)
 
   free(items);
 }
+
+#else
+
+#include <string.h>
+
+void system_monitor_create(SystemMonitor* monitor)
+{
+  if (monitor == NULL)
+  {
+    return;
+  }
+
+  memset(monitor, 0, sizeof(*monitor));
+  diagnostics_log("system_monitor_create: using macOS stub implementation");
+}
+
+void system_monitor_destroy(SystemMonitor* monitor)
+{
+  (void)monitor;
+}
+
+void system_monitor_update(SystemMonitor* monitor, SystemUsageSample* out_sample)
+{
+  if (monitor == NULL || out_sample == NULL)
+  {
+    return;
+  }
+
+  out_sample->cpu_percent = monitor->cpu_percent;
+  out_sample->gpu0_percent = monitor->gpu_percent[0];
+  out_sample->gpu1_percent = monitor->gpu_percent[1];
+}
+
+#endif

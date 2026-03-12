@@ -1,5 +1,26 @@
 #include "block_render.h"
 
+#if defined(__APPLE__)
+
+void block_render_draw_world(
+  int width,
+  int height,
+  const CameraState* camera,
+  const AtmosphereState* atmosphere,
+  const SceneSettings* settings,
+  const BlockWorld* world
+)
+{
+  (void)width;
+  (void)height;
+  (void)camera;
+  (void)atmosphere;
+  (void)settings;
+  (void)world;
+}
+
+#else
+
 #include "gl_headers.h"
 #include "math3d.h"
 
@@ -241,3 +262,5 @@ static void block_render_draw_wire_cube(float x, float y, float z, float r, floa
   glVertex3f(x + 0.0f, y + 1.0f, z + 1.0f);
   glEnd();
 }
+
+#endif

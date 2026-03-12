@@ -2,9 +2,12 @@
 
 #include "block_render.h"
 #include "diagnostics.h"
+#include "grass_render.h"
 #include "math3d.h"
 #include "palm_render.h"
+#include "platform_support.h"
 #include "terrain.h"
+#include "tree_render.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -30,7 +33,7 @@ static void renderer_show_error(const char* title, const char* message);
 static const char* renderer_find_last_path_separator(const char* path);
 static int renderer_file_exists(const char* path);
 static int renderer_build_relative_path(const char* base_path, const char* relative_path, char* out_path, size_t out_path_size);
-static int renderer_build_shader_path(HINSTANCE instance, const char* relative_path, char* out_path, size_t out_path_size);
+static int renderer_build_shader_path(const char* relative_path, char* out_path, size_t out_path_size);
 static int renderer_text_buffer_append(RendererTextBuffer* buffer, const char* text, size_t text_length);
 static int renderer_build_include_path(const char* source_path, const char* include_path, char* out_path, size_t out_path_size);
 static int renderer_append_text_file_recursive(const char* path, const char* label, int depth, RendererTextBuffer* out_buffer);
@@ -39,7 +42,7 @@ static int renderer_load_text_file(const char* path, const char* label, char** o
 static int renderer_check_shader(GLuint shader, const char* label);
 static int renderer_check_program(GLuint program, const char* label);
 static GLuint renderer_compile_shader(GLenum shader_type, const char* source, const char* label);
-static GLuint renderer_create_program_from_files(HINSTANCE instance, const char* vertex_path, const char* fragment_path, const char* label);
+static GLuint renderer_create_program_from_files(const char* vertex_path, const char* fragment_path, const char* label);
 static void renderer_destroy_framebuffer(Renderer* renderer);
 static int renderer_create_framebuffer(Renderer* renderer, int width, int height);
 static void renderer_destroy_shadow_map(Renderer* renderer);
@@ -60,7 +63,7 @@ static void renderer_transform_point(const Matrix* matrix, float x, float y, flo
 static Matrix renderer_get_stabilized_shadow_matrix(const Renderer* renderer, const Matrix* light_view, const Matrix* light_projection);
 static Matrix renderer_get_light_view_projection_matrix(const Renderer* renderer, const CameraState* camera, const AtmosphereState* atmosphere, const SceneSettings* settings);
 
-int renderer_create(Renderer* renderer, HINSTANCE instance, int width, int height)
+int renderer_create(Renderer* renderer, int width, int height)
 {
   const char* renderer_name = NULL;
   const char* vendor_name = NULL;
@@ -85,42 +88,42 @@ int renderer_create(Renderer* renderer, HINSTANCE instance, int width, int heigh
     (vendor_name != NULL) ? vendor_name : "unknown"
   );
 
-  renderer->sky_program = renderer_create_program_from_files(instance, "shaders/sky.vert.glsl", "shaders/sky.frag.glsl", "Sky");
+  renderer->sky_program = renderer_create_program_from_files("shaders/sky.vert.glsl", "shaders/sky.frag.glsl", "Sky");
   if (renderer->sky_program == 0U)
   {
     renderer_destroy(renderer);
     return 0;
   }
 
-  renderer->post_program = renderer_create_program_from_files(instance, "shaders/post.vert.glsl", "shaders/post.frag.glsl", "Post");
+  renderer->post_program = renderer_create_program_from_files("shaders/post.vert.glsl", "shaders/post.frag.glsl", "Post");
   if (renderer->post_program == 0U)
   {
     renderer_destroy(renderer);
     return 0;
   }
 
-  renderer->terrain_program = renderer_create_program_from_files(instance, "shaders/terrain.vert.glsl", "shaders/terrain.frag.glsl", "Terrain");
+  renderer->terrain_program = renderer_create_program_from_files("shaders/terrain.vert.glsl", "shaders/terrain.frag.glsl", "Terrain");
   if (renderer->terrain_program == 0U)
   {
     renderer_destroy(renderer);
     return 0;
   }
 
-  renderer->palm_program = renderer_create_program_from_files(instance, "shaders/palm.vert.glsl", "shaders/palm.frag.glsl", "Palm");
+  renderer->palm_program = renderer_create_program_from_files("shaders/palm.vert.glsl", "shaders/palm.frag.glsl", "Palm");
   if (renderer->palm_program == 0U)
   {
     renderer_destroy(renderer);
     return 0;
   }
 
-  renderer->shadow_program = renderer_create_program_from_files(instance, "shaders/shadow.vert.glsl", "shaders/shadow.frag.glsl", "Shadow");
+  renderer->shadow_program = renderer_create_program_from_files("shaders/shadow.vert.glsl", "shaders/shadow.frag.glsl", "Shadow");
   if (renderer->shadow_program == 0U)
   {
     renderer_destroy(renderer);
     return 0;
   }
 
-  renderer->palm_shadow_program = renderer_create_program_from_files(instance, "shaders/palm_shadow.vert.glsl", "shaders/palm_shadow.frag.glsl", "Palm Shadow");
+  renderer->palm_shadow_program = renderer_create_program_from_files("shaders/palm_shadow.vert.glsl", "shaders/palm_shadow.frag.glsl", "Palm Shadow");
   if (renderer->palm_shadow_program == 0U)
   {
     renderer_destroy(renderer);
@@ -195,7 +198,9 @@ int renderer_create(Renderer* renderer, HINSTANCE instance, int width, int heigh
     return 0;
   }
 
-  if (!palm_render_create(&renderer->palm_mesh, instance))
+  if (!palm_render_create(&renderer->palm_mesh) ||
+    !tree_render_create(&renderer->tree_mesh) ||
+    !grass_render_create(&renderer->grass_mesh))
   {
     renderer_destroy(renderer);
     return 0;
@@ -234,6 +239,8 @@ void renderer_destroy(Renderer* renderer)
   renderer_destroy_shadow_map(renderer);
   renderer_destroy_terrain(renderer);
   palm_render_destroy(&renderer->palm_mesh);
+  tree_render_destroy(&renderer->tree_mesh);
+  grass_render_destroy(&renderer->grass_mesh);
   stats_overlay_destroy(&renderer->stats_overlay);
   console_overlay_destroy(&renderer->console_overlay);
 
@@ -371,6 +378,8 @@ void renderer_render(
   const Matrix light_view_projection = renderer_get_light_view_projection_matrix(renderer, camera, atmosphere, active_settings);
 
   (void)palm_render_update(&renderer->palm_mesh, camera, active_settings, &renderer->quality);
+  (void)tree_render_update(&renderer->tree_mesh, camera, active_settings, &renderer->quality);
+  (void)grass_render_update(&renderer->grass_mesh, camera, active_settings, &renderer->quality);
   renderer_get_terrain_origin(renderer, camera, &terrain_origin_x, &terrain_origin_z);
 
   glEnable(GL_DEPTH_TEST);
@@ -406,7 +415,11 @@ void renderer_render(
   {
     glUniformMatrix4fv(renderer->palm_shadow_light_view_projection_location, 1, GL_FALSE, light_view_projection.m);
   }
+  glDisable(GL_CULL_FACE);
   palm_render_draw(&renderer->palm_mesh);
+  tree_render_draw(&renderer->tree_mesh);
+  grass_render_draw(&renderer->grass_mesh);
+  glEnable(GL_CULL_FACE);
 
   glDisable(GL_POLYGON_OFFSET_FILL);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -545,7 +558,11 @@ void renderer_render(
   {
     glUniform4fv(renderer->palm_environment_location, 1, environment_settings);
   }
+  glDisable(GL_CULL_FACE);
   palm_render_draw(&renderer->palm_mesh);
+  tree_render_draw(&renderer->tree_mesh);
+  grass_render_draw(&renderer->grass_mesh);
+  glEnable(GL_CULL_FACE);
   block_render_draw_world(renderer->framebuffer_width, renderer->framebuffer_height, camera, atmosphere, active_settings, block_world);
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -609,7 +626,7 @@ void renderer_sync_terrain_render_sampling(const Renderer* renderer, const Camer
 static void renderer_show_error(const char* title, const char* message)
 {
   diagnostics_logf("%s: %s", title, message);
-  (void)MessageBoxA(NULL, message, title, MB_ICONERROR | MB_OK);
+  platform_support_show_error_dialog(title, message);
 }
 
 static const char* renderer_find_last_path_separator(const char* path)
@@ -638,20 +655,7 @@ static const char* renderer_find_last_path_separator(const char* path)
 
 static int renderer_file_exists(const char* path)
 {
-  DWORD attributes = 0U;
-
-  if (path == NULL || path[0] == '\0')
-  {
-    return 0;
-  }
-
-  attributes = GetFileAttributesA(path);
-  if (attributes == INVALID_FILE_ATTRIBUTES)
-  {
-    return 0;
-  }
-
-  return (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0U;
+  return platform_support_file_exists(path);
 }
 
 static int renderer_build_relative_path(const char* base_path, const char* relative_path, char* out_path, size_t out_path_size)
@@ -681,25 +685,23 @@ static int renderer_build_relative_path(const char* base_path, const char* relat
   return 1;
 }
 
-static int renderer_build_shader_path(HINSTANCE instance, const char* relative_path, char* out_path, size_t out_path_size)
+static int renderer_build_shader_path(const char* relative_path, char* out_path, size_t out_path_size)
 {
-  char module_path[MAX_PATH] = { 0 };
-  char candidate_path[MAX_PATH] = { 0 };
-  char current_directory[MAX_PATH] = { 0 };
-  DWORD path_length = 0U;
+  char module_path[PLATFORM_PATH_MAX] = { 0 };
+  char candidate_path[PLATFORM_PATH_MAX] = { 0 };
+  char current_directory[PLATFORM_PATH_MAX] = { 0 };
   char* last_separator = NULL;
   size_t base_length = 0U;
   static const char* k_shader_prefix = "shaders/";
   static const char* k_shader_fallbacks[] = {
     "shaders/",
-    "..\\shaders\\",
-    "..\\..\\shaders\\",
-    "..\\..\\..\\shaders\\"
-  };
+      "../shaders/",
+      "../../shaders/",
+      "../../../shaders/"
+    };
   size_t i = 0U;
 
-  path_length = GetModuleFileNameA(instance, module_path, (DWORD)sizeof(module_path));
-  if (path_length == 0U || path_length >= (DWORD)sizeof(module_path))
+  if (!platform_support_get_executable_path(module_path, sizeof(module_path)))
   {
     renderer_show_error("Path Error", "Failed to resolve the executable directory for shader loading.");
     return 0;
@@ -723,12 +725,12 @@ static int renderer_build_shader_path(HINSTANCE instance, const char* relative_p
     }
   }
 
-  if (GetCurrentDirectoryA((DWORD)sizeof(current_directory), current_directory) > 0U)
+  if (platform_support_get_current_directory(current_directory, sizeof(current_directory)))
   {
     base_length = strlen(current_directory);
     if (base_length + 1U + strlen(relative_path) + 1U <= sizeof(candidate_path))
     {
-      (void)snprintf(candidate_path, sizeof(candidate_path), "%s\\%s", current_directory, relative_path);
+      (void)snprintf(candidate_path, sizeof(candidate_path), "%s/%s", current_directory, relative_path);
       if (renderer_file_exists(candidate_path))
       {
         (void)snprintf(out_path, out_path_size, "%s", candidate_path);
@@ -740,9 +742,9 @@ static int renderer_build_shader_path(HINSTANCE instance, const char* relative_p
   if (strncmp(relative_path, k_shader_prefix, strlen(k_shader_prefix)) == 0)
   {
     const char* suffix = relative_path + strlen(k_shader_prefix);
-    for (i = 0U; i < sizeof(k_shader_fallbacks) / sizeof(k_shader_fallbacks[0]); ++i)
-    {
-      char fallback_relative[MAX_PATH] = { 0 };
+      for (i = 0U; i < sizeof(k_shader_fallbacks) / sizeof(k_shader_fallbacks[0]); ++i)
+      {
+        char fallback_relative[PLATFORM_PATH_MAX] = { 0 };
 
       if (strlen(k_shader_fallbacks[i]) + strlen(suffix) + 1U > sizeof(fallback_relative))
       {
@@ -891,8 +893,8 @@ static int renderer_append_text_file_recursive(const char* path, const char* lab
       const char* include_end = strchr(include_begin, '"');
       if (include_end != NULL && include_end < line_end)
       {
-        char include_name[MAX_PATH] = { 0 };
-        char include_path[MAX_PATH] = { 0 };
+        char include_name[PLATFORM_PATH_MAX] = { 0 };
+        char include_path[PLATFORM_PATH_MAX] = { 0 };
         size_t include_length = (size_t)(include_end - include_begin);
 
         if (include_length == 0U || include_length >= sizeof(include_name))
@@ -1110,10 +1112,10 @@ static GLuint renderer_compile_shader(GLenum shader_type, const char* source, co
   return shader;
 }
 
-static GLuint renderer_create_program_from_files(HINSTANCE instance, const char* vertex_path, const char* fragment_path, const char* label)
+static GLuint renderer_create_program_from_files(const char* vertex_path, const char* fragment_path, const char* label)
 {
-  char resolved_vertex_path[MAX_PATH] = { 0 };
-  char resolved_fragment_path[MAX_PATH] = { 0 };
+  char resolved_vertex_path[PLATFORM_PATH_MAX] = { 0 };
+  char resolved_fragment_path[PLATFORM_PATH_MAX] = { 0 };
   char* vertex_source = NULL;
   char* fragment_source = NULL;
   GLuint vertex_shader = 0U;
@@ -1125,8 +1127,8 @@ static GLuint renderer_create_program_from_files(HINSTANCE instance, const char*
   (void)snprintf(vertex_label, sizeof(vertex_label), "%s Vertex", label);
   (void)snprintf(fragment_label, sizeof(fragment_label), "%s Fragment", label);
 
-  if (!renderer_build_shader_path(instance, vertex_path, resolved_vertex_path, sizeof(resolved_vertex_path)) ||
-    !renderer_build_shader_path(instance, fragment_path, resolved_fragment_path, sizeof(resolved_fragment_path)) ||
+  if (!renderer_build_shader_path(vertex_path, resolved_vertex_path, sizeof(resolved_vertex_path)) ||
+    !renderer_build_shader_path(fragment_path, resolved_fragment_path, sizeof(resolved_fragment_path)) ||
     !renderer_load_text_file(resolved_vertex_path, vertex_label, &vertex_source) ||
     !renderer_load_text_file(resolved_fragment_path, fragment_label, &fragment_source))
   {

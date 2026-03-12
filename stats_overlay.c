@@ -1,5 +1,40 @@
 #include "stats_overlay.h"
 
+#if defined(__APPLE__)
+
+#include <string.h>
+
+int stats_overlay_create(StatsOverlay* overlay)
+{
+  if (overlay == NULL)
+  {
+    return 0;
+  }
+
+  memset(overlay, 0, sizeof(*overlay));
+  return 1;
+}
+
+void stats_overlay_destroy(StatsOverlay* overlay)
+{
+  if (overlay == NULL)
+  {
+    return;
+  }
+
+  memset(overlay, 0, sizeof(*overlay));
+}
+
+void stats_overlay_render(StatsOverlay* overlay, int width, int height, const OverlayState* state)
+{
+  (void)overlay;
+  (void)width;
+  (void)height;
+  (void)state;
+}
+
+#else
+
 #include "block_world.h"
 #include "diagnostics.h"
 #include "player_controller.h"
@@ -36,6 +71,7 @@ static void stats_overlay_draw_text_shadow(
   float a,
   const char* text
 );
+static void stats_overlay_copy_text_fit(char* buffer, size_t buffer_size, const char* text, int max_characters);
 static void stats_overlay_push_frame_sample(StatsOverlay* overlay, float frame_time_ms);
 static void stats_overlay_get_frame_extents(const StatsOverlay* overlay, float* out_min_ms, float* out_max_ms);
 static void stats_overlay_draw_frame_graph(
@@ -48,6 +84,7 @@ static void stats_overlay_draw_frame_graph(
   float line_g,
   float line_b
 );
+static void stats_overlay_draw_debug_console(const StatsOverlay* overlay, int width, int height, const OverlayState* state);
 
 int stats_overlay_create(StatsOverlay* overlay)
 {
@@ -260,6 +297,8 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
   (void)snprintf(line_buffer, sizeof(line_buffer), "TGT %s", active_overlay->metrics.target_active != 0 ? "ON" : "OFF");
   stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 278.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
 
+  stats_overlay_draw_debug_console(overlay, width, height, active_overlay);
+
   if (active_overlay->cursor_mode_enabled == 0)
   {
     const float world_left = (float)active_overlay->panel_width;
@@ -455,6 +494,43 @@ static void stats_overlay_draw_text_shadow(
   stats_overlay_draw_text(font_base, x, y, r, g, b, a, text);
 }
 
+static void stats_overlay_copy_text_fit(char* buffer, size_t buffer_size, const char* text, int max_characters)
+{
+  size_t length = 0U;
+  size_t copy_length = 0U;
+
+  if (buffer == NULL || buffer_size == 0U)
+  {
+    return;
+  }
+
+  buffer[0] = '\0';
+  if (text == NULL || text[0] == '\0' || max_characters <= 0)
+  {
+    return;
+  }
+
+  length = strlen(text);
+  if ((int)length <= max_characters)
+  {
+    (void)snprintf(buffer, buffer_size, "%s", text);
+    return;
+  }
+
+  if (max_characters <= 3)
+  {
+    return;
+  }
+
+  copy_length = (size_t)(max_characters - 3);
+  if (copy_length > buffer_size - 4U)
+  {
+    copy_length = buffer_size - 4U;
+  }
+  memcpy(buffer, text, copy_length);
+  memcpy(buffer + copy_length, "...", 4U);
+}
+
 static void stats_overlay_push_frame_sample(StatsOverlay* overlay, float frame_time_ms)
 {
   if (overlay == NULL || frame_time_ms <= 0.0f)
@@ -610,3 +686,71 @@ static void stats_overlay_draw_frame_graph(
     stats_overlay_draw_rect(x - 2.0f, y - 2.0f, x + 2.0f, y + 2.0f, 0.78f, 1.0f, 0.82f, 0.96f);
   }
 }
+
+static void stats_overlay_draw_debug_console(const StatsOverlay* overlay, int width, int height, const OverlayState* state)
+{
+  const int recent_count = diagnostics_get_recent_message_count();
+  const int visible_count = (recent_count > 8) ? 8 : recent_count;
+  const int visible_width = overlay_get_visible_width_for_state(state->panel_width, state->panel_collapsed);
+  const float panel_left = (float)visible_width + 16.0f;
+  const float panel_right_limit = (float)width - 334.0f;
+  const float panel_width = fminf(560.0f, panel_right_limit - panel_left);
+  const float line_height = 14.0f;
+  const float panel_height = 48.0f + (float)((visible_count > 0) ? visible_count : 1) * line_height;
+  const float panel_bottom = (float)height - 16.0f;
+  const float panel_top = panel_bottom - panel_height;
+  const float panel_right = panel_left + panel_width;
+  const float content_left = panel_left + 12.0f;
+  const float content_right = panel_right - 12.0f;
+  const int max_characters = (int)((content_right - content_left) / 7.0f);
+  int message_index = 0;
+  int first_visible_index = 0;
+  char line_buffer[224] = { 0 };
+
+  if (overlay == NULL || state == NULL || width <= 0 || height <= 0 || panel_width < 220.0f)
+  {
+    return;
+  }
+
+  stats_overlay_draw_rect(panel_left, panel_top, panel_right, panel_bottom, 0.03f, 0.03f, 0.04f, 0.82f);
+  stats_overlay_draw_rect(panel_left, panel_top, panel_right, panel_top + 28.0f, 0.15f, 0.18f, 0.22f, 0.30f);
+  stats_overlay_draw_outline(panel_left + 0.5f, panel_top + 0.5f, panel_right - 0.5f, panel_bottom - 0.5f, 0.48f, 0.56f, 0.66f, 0.28f);
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, panel_left + 12.0f, panel_top + 20.0f, 0.92f, 0.94f, 0.98f, 0.96f, "DEBUG CONSOLE");
+
+  if (visible_count <= 0)
+  {
+    stats_overlay_draw_text_shadow(
+      overlay,
+      overlay->small_font_base,
+      content_left,
+      panel_top + 42.0f,
+      0.74f,
+      0.80f,
+      0.88f,
+      0.90f,
+      "Belum ada diagnostics message.");
+    return;
+  }
+
+  first_visible_index = recent_count - visible_count;
+  for (message_index = 0; message_index < visible_count; ++message_index)
+  {
+    const char* message = diagnostics_get_recent_message(first_visible_index + message_index);
+    const float y = panel_top + 42.0f + (float)message_index * line_height;
+    const float fade = 0.72f + 0.28f * ((float)(message_index + 1) / (float)visible_count);
+
+    stats_overlay_copy_text_fit(line_buffer, sizeof(line_buffer), message, max_characters);
+    stats_overlay_draw_text_shadow(
+      overlay,
+      overlay->small_font_base,
+      content_left,
+      y,
+      0.76f * fade,
+      0.83f * fade,
+      0.90f * fade,
+      0.94f,
+      line_buffer);
+  }
+}
+
+#endif

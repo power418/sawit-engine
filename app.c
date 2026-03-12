@@ -2,13 +2,22 @@
 
 #include "block_world.h"
 #include "diagnostics.h"
+#include "graphics_backend.h"
 #include "gpu_preferences.h"
-#include "platform_win32.h"
 #include "player_controller.h"
+#include "platform_support.h"
 #include "renderer.h"
 #include "scene_settings.h"
 #include "system_monitor.h"
 #include "terrain.h"
+
+#if defined(_WIN32)
+#include "platform_win32.h"
+#elif defined(__APPLE__)
+#include "platform_cocoa.h"
+#else
+#error Unsupported platform
+#endif
 
 #include <math.h>
 #include <stdio.h>
@@ -57,11 +66,40 @@ static const float k_app_default_time_of_day = 0.23f;
 static const float k_app_default_day_cycle_speed = 1.0f / 180.0f;
 static const float k_app_stats_update_interval_seconds = 0.25f;
 
-int app_run(HINSTANCE instance, int show_command)
+int app_run(void)
 {
   AppState app = { 0 };
+  GraphicsBackend graphics_backend = GRAPHICS_BACKEND_OPENGL;
+  char graphics_error_message[256] = { 0 };
 
   diagnostics_log("app_run: startup begin");
+  graphics_backend = graphics_backend_resolve_requested();
+  diagnostics_logf("app_run: requested_graphics_backend=%s", graphics_backend_get_name(graphics_backend));
+
+  if (!graphics_backend_is_supported_on_platform(graphics_backend))
+  {
+    if (!graphics_backend_build_error_message(graphics_backend, graphics_error_message, sizeof(graphics_error_message)))
+    {
+      (void)snprintf(graphics_error_message, sizeof(graphics_error_message), "Graphics backend '%s' tidak didukung.", graphics_backend_get_name(graphics_backend));
+    }
+    diagnostics_logf("app_run: unsupported_graphics_backend=%s", graphics_backend_get_name(graphics_backend));
+    platform_support_show_error_dialog("Graphics Backend Not Supported", graphics_error_message);
+    return 1;
+  }
+
+#if defined(__APPLE__)
+  if (!graphics_backend_build_error_message(graphics_backend, graphics_error_message, sizeof(graphics_error_message)))
+  {
+    (void)snprintf(
+      graphics_error_message,
+      sizeof(graphics_error_message),
+      "Backend '%s' belum siap dipakai di macOS.",
+      graphics_backend_get_name(graphics_backend));
+  }
+  diagnostics_logf("app_run: apple_backend_guard=%s", graphics_backend_get_name(graphics_backend));
+  platform_support_show_error_dialog("Metal Renderer Required", graphics_error_message);
+  return 1;
+#endif
 
   app.scene_settings = scene_settings_default();
   app.day_cycle.time_of_day = k_app_default_time_of_day;
@@ -70,13 +108,13 @@ int app_run(HINSTANCE instance, int show_command)
   player_controller_init(&app.player, &app.scene_settings);
   block_world_init(&app.block_world, &app.scene_settings);
 
-  if (!platform_create(&app.platform, instance, show_command, L"OpenGL Sky", 1280, 720))
+  if (!platform_create(&app.platform, "OpenGL Sky", 1280, 720))
   {
     diagnostics_log("app_run: platform_create failed");
     return 1;
   }
 
-  if (!renderer_create(&app.renderer, instance, app.platform.width, app.platform.height))
+  if (!renderer_create(&app.renderer, app.platform.width, app.platform.height))
   {
     diagnostics_log("app_run: renderer_create failed");
     platform_destroy(&app.platform);
@@ -147,7 +185,7 @@ int app_run(HINSTANCE instance, int show_command)
 
     if (app.platform.width <= 0 || app.platform.height <= 0)
     {
-      Sleep(16U);
+      platform_support_sleep_ms(16U);
       continue;
     }
 
@@ -486,6 +524,18 @@ static void app_update_window_title(const AppState* app)
   const int hours = total_minutes / 60;
   const int minutes = total_minutes % 60;
 
+  #if defined(__APPLE__)
+  (void)snprintf(
+    title,
+    sizeof(title),
+    "OpenGL Sky | %02d:%02d | %s | %s | block %s | cycle %.0fs | G mode | 1-4 blocks | LMB break | RMB place | Alt free cursor",
+    hours,
+    minutes,
+    (app->platform.overlay.freeze_time_enabled != 0) ? "Frozen" : ((app->day_cycle.auto_advance != 0) ? "Auto" : "Paused"),
+    player_controller_get_mode_label(app->player.mode),
+    block_world_get_block_label(app->player.selected_block),
+    cycle_duration_seconds);
+  #else
   (void)snprintf(
     title,
     sizeof(title),
@@ -496,5 +546,6 @@ static void app_update_window_title(const AppState* app)
     player_controller_get_mode_label(app->player.mode),
     block_world_get_block_label(app->player.selected_block),
     cycle_duration_seconds);
+  #endif
   platform_set_window_title(&app->platform, title);
 }

@@ -2,6 +2,8 @@
 
 #include "diagnostics.h"
 
+#if defined(_WIN32)
+
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -422,3 +424,99 @@ const char* gpu_preferences_get_mode_short_label(GpuPreferenceMode mode)
       return "Auto";
   }
 }
+
+#else
+
+#include <string.h>
+
+static void gpu_preferences_copy_utf8(char* destination, size_t destination_size, const char* source)
+{
+  size_t length = 0U;
+
+  if (destination == NULL || destination_size == 0U)
+  {
+    return;
+  }
+
+  destination[0] = '\0';
+  if (source == NULL)
+  {
+    return;
+  }
+
+  length = strlen(source);
+  if (length >= destination_size)
+  {
+    length = destination_size - 1U;
+  }
+
+  memcpy(destination, source, length);
+  destination[length] = '\0';
+}
+
+int gpu_preferences_query(GpuPreferenceInfo* out_info)
+{
+  if (out_info == NULL)
+  {
+    return 0;
+  }
+
+  memset(out_info, 0, sizeof(*out_info));
+  out_info->minimum_power_index = -1;
+  out_info->high_performance_index = -1;
+  out_info->selected_mode = GPU_PREFERENCE_MODE_AUTO;
+  gpu_preferences_copy_utf8(
+    out_info->status_message,
+    sizeof(out_info->status_message),
+    "GPU routing selection is not available on macOS");
+  diagnostics_log("gpu_preferences_query: using macOS stub implementation");
+  return 0;
+}
+
+void gpu_preferences_set_current_renderer(GpuPreferenceInfo* info, const char* renderer_name, const char* vendor_name)
+{
+  if (info == NULL)
+  {
+    return;
+  }
+
+  gpu_preferences_copy_utf8(info->current_renderer, sizeof(info->current_renderer), (renderer_name != NULL) ? renderer_name : "");
+  gpu_preferences_copy_utf8(info->current_vendor, sizeof(info->current_vendor), (vendor_name != NULL) ? vendor_name : "");
+}
+
+int gpu_preferences_apply_and_relaunch(GpuPreferenceMode mode)
+{
+  (void)mode;
+  diagnostics_log("gpu_preferences_apply_and_relaunch: macOS stub does not support relaunch routing");
+  return 0;
+}
+
+const char* gpu_preferences_get_mode_label(GpuPreferenceMode mode)
+{
+  switch (mode)
+  {
+    case GPU_PREFERENCE_MODE_MINIMUM_POWER:
+      return "Power saving";
+    case GPU_PREFERENCE_MODE_HIGH_PERFORMANCE:
+      return "High performance";
+    case GPU_PREFERENCE_MODE_AUTO:
+    default:
+      return "System default";
+  }
+}
+
+const char* gpu_preferences_get_mode_short_label(GpuPreferenceMode mode)
+{
+  switch (mode)
+  {
+    case GPU_PREFERENCE_MODE_MINIMUM_POWER:
+      return "Eco";
+    case GPU_PREFERENCE_MODE_HIGH_PERFORMANCE:
+      return "High";
+    case GPU_PREFERENCE_MODE_AUTO:
+    default:
+      return "Auto";
+  }
+}
+
+#endif

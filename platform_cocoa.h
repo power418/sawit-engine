@@ -1,11 +1,12 @@
-#ifndef PLATFORM_WIN32_H
-#define PLATFORM_WIN32_H
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#ifndef PLATFORM_COCOA_H
+#define PLATFORM_COCOA_H
 
 #include "gpu_preferences.h"
 #include "overlay_ui.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct PlatformInput
 {
@@ -34,17 +35,14 @@ typedef struct PlatformInput
 
 typedef struct PlatformApp
 {
-  HINSTANCE instance;
-  HWND window;
-  HDC device_context;
-  HGLRC gl_context;
-  LONG_PTR windowed_style;
-  LONG_PTR windowed_ex_style;
-  int fullscreen_enabled;
-  LARGE_INTEGER timer_frequency;
-  LARGE_INTEGER timer_start;
-  LONG mouse_dx;
-  LONG mouse_dy;
+  void* application;
+  void* window;
+  void* view;
+  void* gl_context;
+  void* window_delegate;
+  double timer_start;
+  int mouse_dx;
+  int mouse_dy;
   int width;
   int height;
   int running;
@@ -57,17 +55,19 @@ typedef struct PlatformApp
   int previous_jump_down;
   int previous_player_mode_down;
   int previous_alt_down;
+  int previous_fullscreen_down;
   int cursor_hidden;
   int mouse_captured;
   int cursor_mode_enabled;
   int suppress_next_mouse_delta;
-  int previous_left_button_down;
   int previous_world_left_button_down;
   int previous_world_right_button_down;
-  int suppress_world_click_until_release;
+  int left_button_down;
+  int right_button_down;
   int gpu_switch_requested;
   GpuPreferenceMode requested_gpu_preference;
   OverlayState overlay;
+  unsigned char key_down[256];
 } PlatformApp;
 
 int platform_create(PlatformApp* app, const char* title, int width, int height);
@@ -85,5 +85,9 @@ void platform_update_overlay_metrics(PlatformApp* app, const OverlayMetrics* met
 int platform_consume_gpu_switch_request(PlatformApp* app, GpuPreferenceMode* out_mode);
 void platform_refresh_gpu_info(PlatformApp* app);
 void platform_show_error_message(const char* title, const char* message);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

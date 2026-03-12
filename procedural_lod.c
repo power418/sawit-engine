@@ -1,6 +1,7 @@
 #include "procedural_lod.h"
 
 #include <math.h>
+#include <stddef.h>
 
 static float procedural_lod_clamp(float value, float min_value, float max_value);
 static float procedural_lod_mix(float a, float b, float t);

@@ -10,8 +10,15 @@
 
 enum
 {
-  PALM_RENDER_MAX_VARIANTS = 3
+  PALM_RENDER_MAX_VARIANTS = 4
 };
+
+typedef enum PalmRenderCategory
+{
+  PALM_RENDER_CATEGORY_PALM = 0,
+  PALM_RENDER_CATEGORY_TREE = 1,
+  PALM_RENDER_CATEGORY_GRASS = 2
+} PalmRenderCategory;
 
 typedef struct PalmRenderVariant
 {
@@ -23,6 +30,14 @@ typedef struct PalmRenderVariant
   void* cpu_instances;
   size_t cpu_instance_capacity;
   float model_height;
+  int category;
+  float desired_height_min;
+  float desired_height_max;
+  float scale_jitter_min;
+  float scale_jitter_max;
+  float embed_depth_min;
+  float embed_depth_max;
+  float slope_limit;
 } PalmRenderVariant;
 
 typedef struct PalmRenderMesh
@@ -31,7 +46,8 @@ typedef struct PalmRenderMesh
   int variant_count;
 } PalmRenderMesh;
 
-int palm_render_create(PalmRenderMesh* mesh, HINSTANCE instance);
+int palm_render_create(PalmRenderMesh* mesh);
+int palm_render_create_category(PalmRenderMesh* mesh, PalmRenderCategory category);
 void palm_render_destroy(PalmRenderMesh* mesh);
 int palm_render_update(
   PalmRenderMesh* mesh,

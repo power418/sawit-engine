@@ -2,6 +2,7 @@
 #define CAMERA_H
 
 #include <math.h>
+#include <stddef.h>
 
 typedef struct CameraState
 {
