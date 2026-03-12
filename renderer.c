@@ -415,11 +415,8 @@ void renderer_render(
   {
     glUniformMatrix4fv(renderer->palm_shadow_light_view_projection_location, 1, GL_FALSE, light_view_projection.m);
   }
-  glDisable(GL_CULL_FACE);
   palm_render_draw(&renderer->palm_mesh);
   tree_render_draw(&renderer->tree_mesh);
-  grass_render_draw(&renderer->grass_mesh);
-  glEnable(GL_CULL_FACE);
 
   glDisable(GL_POLYGON_OFFSET_FILL);
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -558,9 +555,9 @@ void renderer_render(
   {
     glUniform4fv(renderer->palm_environment_location, 1, environment_settings);
   }
-  glDisable(GL_CULL_FACE);
   palm_render_draw(&renderer->palm_mesh);
   tree_render_draw(&renderer->tree_mesh);
+  glDisable(GL_CULL_FACE);
   grass_render_draw(&renderer->grass_mesh);
   glEnable(GL_CULL_FACE);
   block_render_draw_world(renderer->framebuffer_width, renderer->framebuffer_height, camera, atmosphere, active_settings, block_world);

@@ -88,7 +88,7 @@ int platform_create(PlatformApp* app, const char* title, int width, int height)
     0U,
     k_platform_window_class_name,
     wide_title,
-    WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+    WS_OVERLAPPEDWINDOW,
     CW_USEDEFAULT,
     CW_USEDEFAULT,
     window_rect.right - window_rect.left,
@@ -216,6 +216,11 @@ int platform_create(PlatformApp* app, const char* title, int width, int height)
     &app->overlay.gpu_info,
     (const char*)glGetString(GL_RENDERER),
     (const char*)glGetString(GL_VENDOR));
+
+  glViewport(0, 0, (app->width > 0) ? app->width : 1, (app->height > 0) ? app->height : 1);
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  SwapBuffers(app->device_context);
 
   ShowWindow(app->window, SW_SHOWDEFAULT);
   UpdateWindow(app->window);
@@ -670,6 +675,9 @@ static LRESULT CALLBACK platform_window_proc(HWND window, UINT message, WPARAM w
       }
       break;
 
+    case WM_ERASEBKGND:
+      return 1;
+
     case WM_INPUT:
       if (app != NULL)
       {
@@ -709,6 +717,7 @@ static int platform_register_window_class(HINSTANCE instance)
   window_class.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
   window_class.lpfnWndProc = platform_window_proc;
   window_class.hInstance = instance;
+  window_class.hbrBackground = NULL;
   window_class.hCursor = LoadCursorA(NULL, IDC_ARROW);
   window_class.lpszClassName = k_platform_window_class_name;
 

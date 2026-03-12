@@ -16,7 +16,7 @@ int tree_render_update(
   const SceneSettings* settings,
   const RendererQualityProfile* quality)
 {
-  return palm_render_update(mesh, camera, settings, quality);
+  return palm_render_update_category(mesh, PALM_RENDER_CATEGORY_TREE, camera, settings, quality);
 }
 
 void tree_render_draw(const TreeRenderMesh* mesh)

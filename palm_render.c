@@ -127,6 +127,7 @@ static int palm_render_push_vec3(PalmVec3Array* array, PalmVec3 value);
 static int palm_render_push_vertex(PalmVertexArray* array, PalmVertex value);
 static int palm_render_path_uses_black_key(const char* path);
 static int palm_render_estimate_texture_color(const char* texture_path, PalmColor* out_color);
+static int palm_render_material_needs_texture_color(const PalmMaterial* material);
 static PalmMaterial* palm_render_find_material_mutable(PalmMaterialArray* materials, const char* name);
 static PalmMaterial* palm_render_push_material(PalmMaterialArray* array, const char* name);
 static PalmMaterial* palm_render_get_or_create_material(PalmMaterialArray* materials, const char* name);
@@ -149,6 +150,18 @@ static float palm_render_estimate_slope(float x, float z, const SceneSettings* s
 static int palm_render_has_category(const PalmRenderMesh* mesh, int category);
 static GLsizei palm_render_get_max_vertex_count_for_category(const PalmRenderMesh* mesh, int category);
 static PalmRenderVariant* palm_render_pick_variant(PalmRenderMesh* mesh, int category, int grid_x, int grid_z, unsigned int seed);
+static void palm_render_reset_instances(PalmRenderMesh* mesh);
+static int palm_render_upload_instances(PalmRenderMesh* mesh);
+static int palm_render_float_nearly_equal(float a, float b, float epsilon);
+static int palm_render_cache_matches(
+  const PalmRenderMesh* mesh,
+  int grid_min_x,
+  int grid_max_x,
+  int grid_min_z,
+  int grid_max_z,
+  float radius,
+  float cell_size,
+  const SceneSettings* settings);
 static int palm_render_populate_palm_instances(
   PalmRenderMesh* mesh,
   const CameraState* camera,
@@ -348,6 +361,66 @@ void palm_render_destroy(PalmRenderMesh* mesh)
     palm_render_destroy_variant(&mesh->variants[variant_index]);
   }
   mesh->variant_count = 0;
+  mesh->cache_valid = 0;
+}
+
+int palm_render_update_category(
+  PalmRenderMesh* mesh,
+  PalmRenderCategory category,
+  const CameraState* camera,
+  const SceneSettings* settings,
+  const RendererQualityProfile* quality)
+{
+  const SceneSettings fallback_settings = scene_settings_default();
+  const SceneSettings* active_settings = (settings != NULL) ? settings : &fallback_settings;
+  int populate_result = 1;
+  int variant_index = 0;
+  int had_instances = 0;
+
+  if (mesh == NULL)
+  {
+    return 0;
+  }
+
+  if (camera == NULL || mesh->variant_count <= 0 || active_settings->palm_size <= 0.01f || !palm_render_has_category(mesh, category))
+  {
+    for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
+    {
+      if (mesh->variants[variant_index].instance_count > 0)
+      {
+        had_instances = 1;
+      }
+      mesh->variants[variant_index].instance_count = 0;
+    }
+    mesh->cache_valid = 0;
+    return had_instances ? palm_render_upload_instances(mesh) : 1;
+  }
+
+  switch (category)
+  {
+    case PALM_RENDER_CATEGORY_PALM:
+      populate_result = palm_render_populate_palm_instances(mesh, camera, active_settings, quality);
+      break;
+    case PALM_RENDER_CATEGORY_TREE:
+      populate_result = palm_render_populate_tree_instances(mesh, camera, active_settings, quality);
+      break;
+    case PALM_RENDER_CATEGORY_GRASS:
+      populate_result = palm_render_populate_grass_instances(mesh, camera, active_settings, quality);
+      break;
+    default:
+      return 0;
+  }
+
+  if (populate_result == 0)
+  {
+    return 0;
+  }
+  if (populate_result == 2)
+  {
+    return 1;
+  }
+
+  return palm_render_upload_instances(mesh);
 }
 
 int palm_render_update(
@@ -356,46 +429,7 @@ int palm_render_update(
   const SceneSettings* settings,
   const RendererQualityProfile* quality)
 {
-  const SceneSettings fallback_settings = scene_settings_default();
-  const SceneSettings* active_settings = (settings != NULL) ? settings : &fallback_settings;
-  int variant_index = 0;
-
-  if (mesh == NULL)
-  {
-    return 0;
-  }
-
-  for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
-  {
-    mesh->variants[variant_index].instance_count = 0;
-  }
-
-  if (camera == NULL || mesh->variant_count <= 0 || active_settings->palm_size <= 0.01f)
-  {
-    return 1;
-  }
-
-  if (!palm_render_populate_palm_instances(mesh, camera, active_settings, quality) ||
-    !palm_render_populate_tree_instances(mesh, camera, active_settings, quality) ||
-    !palm_render_populate_grass_instances(mesh, camera, active_settings, quality))
-  {
-    return 0;
-  }
-
-  for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
-  {
-    PalmRenderVariant* variant = &mesh->variants[variant_index];
-
-    glBindBuffer(GL_ARRAY_BUFFER, variant->instance_buffer);
-    glBufferData(
-      GL_ARRAY_BUFFER,
-      sizeof(PalmInstanceData) * (size_t)variant->instance_count,
-      (variant->instance_count > 0) ? variant->cpu_instances : NULL,
-      GL_DYNAMIC_DRAW);
-  }
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-  return 1;
+  return palm_render_update_category(mesh, PALM_RENDER_CATEGORY_PALM, camera, settings, quality);
 }
 
 void palm_render_draw(const PalmRenderMesh* mesh)
@@ -822,6 +856,39 @@ static int palm_render_estimate_texture_color(const char* texture_path, PalmColo
   return 1;
 }
 
+static int palm_render_material_needs_texture_color(const PalmMaterial* material)
+{
+  float min_channel = 0.0f;
+  float max_channel = 0.0f;
+
+  if (material == NULL || material->has_diffuse == 0)
+  {
+    return 1;
+  }
+
+  min_channel = material->diffuse.r;
+  if (material->diffuse.g < min_channel)
+  {
+    min_channel = material->diffuse.g;
+  }
+  if (material->diffuse.b < min_channel)
+  {
+    min_channel = material->diffuse.b;
+  }
+
+  max_channel = material->diffuse.r;
+  if (material->diffuse.g > max_channel)
+  {
+    max_channel = material->diffuse.g;
+  }
+  if (material->diffuse.b > max_channel)
+  {
+    max_channel = material->diffuse.b;
+  }
+
+  return (min_channel >= 0.94f && max_channel <= 1.01f) || (max_channel - min_channel <= 0.03f && max_channel >= 0.90f);
+}
+
 static int palm_render_reserve_memory(void** buffer, size_t* capacity, size_t required, size_t element_size)
 {
   void* new_buffer = NULL;
@@ -1030,7 +1097,8 @@ static int palm_render_parse_mtl(const char* mtl_path, PalmMaterialArray* materi
 
       (void)snprintf(relative_name, sizeof(relative_name), "%s", argument);
       palm_render_trim_right_in_place(relative_name);
-      if (palm_render_resolve_material_asset_path(mtl_path, relative_name, texture_path, sizeof(texture_path)) &&
+      if (palm_render_material_needs_texture_color(current_material) &&
+        palm_render_resolve_material_asset_path(mtl_path, relative_name, texture_path, sizeof(texture_path)) &&
         palm_render_estimate_texture_color(texture_path, &texture_color))
       {
         current_material->diffuse = texture_color;
@@ -1508,6 +1576,82 @@ static int palm_render_reserve_instances(PalmRenderVariant* variant, size_t requ
   return 1;
 }
 
+static void palm_render_reset_instances(PalmRenderMesh* mesh)
+{
+  int variant_index = 0;
+
+  if (mesh == NULL)
+  {
+    return;
+  }
+
+  for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
+  {
+    mesh->variants[variant_index].instance_count = 0;
+  }
+}
+
+static int palm_render_upload_instances(PalmRenderMesh* mesh)
+{
+  int variant_index = 0;
+
+  if (mesh == NULL)
+  {
+    return 0;
+  }
+
+  for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
+  {
+    PalmRenderVariant* variant = &mesh->variants[variant_index];
+
+    glBindBuffer(GL_ARRAY_BUFFER, variant->instance_buffer);
+    glBufferData(
+      GL_ARRAY_BUFFER,
+      sizeof(PalmInstanceData) * (size_t)variant->instance_count,
+      (variant->instance_count > 0) ? variant->cpu_instances : NULL,
+      GL_DYNAMIC_DRAW);
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  return 1;
+}
+
+static int palm_render_float_nearly_equal(float a, float b, float epsilon)
+{
+  return fabsf(a - b) <= epsilon;
+}
+
+static int palm_render_cache_matches(
+  const PalmRenderMesh* mesh,
+  int grid_min_x,
+  int grid_max_x,
+  int grid_min_z,
+  int grid_max_z,
+  float radius,
+  float cell_size,
+  const SceneSettings* settings)
+{
+  if (mesh == NULL || settings == NULL || mesh->cache_valid == 0)
+  {
+    return 0;
+  }
+
+  return
+    mesh->cache_grid_min_x == grid_min_x &&
+    mesh->cache_grid_max_x == grid_max_x &&
+    mesh->cache_grid_min_z == grid_min_z &&
+    mesh->cache_grid_max_z == grid_max_z &&
+    palm_render_float_nearly_equal(mesh->cache_radius, radius, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_cell_size, cell_size, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_palm_size, settings->palm_size, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_palm_count, settings->palm_count, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_palm_fruit_density, settings->palm_fruit_density, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_palm_render_radius, settings->palm_render_radius, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_terrain_base_height, settings->terrain_base_height, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_terrain_height_scale, settings->terrain_height_scale, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_terrain_roughness, settings->terrain_roughness, 0.001f) &&
+    palm_render_float_nearly_equal(mesh->cache_terrain_ridge_strength, settings->terrain_ridge_strength, 0.001f);
+}
+
 static int palm_render_has_category(const PalmRenderMesh* mesh, int category)
 {
   int variant_index = 0;
@@ -1632,6 +1776,8 @@ static int palm_render_populate_palm_instances(
 
   if (effective_palm_target <= 0 || cell_size <= 0.0f)
   {
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
     return 1;
   }
 
@@ -1642,6 +1788,14 @@ static int palm_render_populate_palm_instances(
     const int grid_max_z = (int)ceilf((camera->z + radius) / cell_size);
     const size_t estimated_capacity = (size_t)(grid_max_x - grid_min_x + 1) * (size_t)(grid_max_z - grid_min_z + 1);
     int variant_index = 0;
+
+    if (palm_render_cache_matches(mesh, grid_min_x, grid_max_x, grid_min_z, grid_max_z, radius, cell_size, settings))
+    {
+      return 2;
+    }
+
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
 
     for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
     {
@@ -1708,6 +1862,22 @@ static int palm_render_populate_palm_instances(
         variant->instance_count += 1;
       }
     }
+
+    mesh->cache_valid = 1;
+    mesh->cache_grid_min_x = grid_min_x;
+    mesh->cache_grid_max_x = grid_max_x;
+    mesh->cache_grid_min_z = grid_min_z;
+    mesh->cache_grid_max_z = grid_max_z;
+    mesh->cache_radius = radius;
+    mesh->cache_cell_size = cell_size;
+    mesh->cache_palm_size = settings->palm_size;
+    mesh->cache_palm_count = settings->palm_count;
+    mesh->cache_palm_fruit_density = settings->palm_fruit_density;
+    mesh->cache_palm_render_radius = settings->palm_render_radius;
+    mesh->cache_terrain_base_height = settings->terrain_base_height;
+    mesh->cache_terrain_height_scale = settings->terrain_height_scale;
+    mesh->cache_terrain_roughness = settings->terrain_roughness;
+    mesh->cache_terrain_ridge_strength = settings->terrain_ridge_strength;
   }
 
   return 1;
@@ -1758,6 +1928,8 @@ static int palm_render_populate_tree_instances(
 
   if (effective_tree_target <= 0 || cell_size <= 0.0f)
   {
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
     return 1;
   }
 
@@ -1768,6 +1940,14 @@ static int palm_render_populate_tree_instances(
     const int grid_max_z = (int)ceilf((camera->z + radius) / cell_size);
     const size_t estimated_capacity = (size_t)(grid_max_x - grid_min_x + 1) * (size_t)(grid_max_z - grid_min_z + 1);
     int variant_index = 0;
+
+    if (palm_render_cache_matches(mesh, grid_min_x, grid_max_x, grid_min_z, grid_max_z, radius, cell_size, settings))
+    {
+      return 2;
+    }
+
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
 
     for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
     {
@@ -1834,6 +2014,22 @@ static int palm_render_populate_tree_instances(
         variant->instance_count += 1;
       }
     }
+
+    mesh->cache_valid = 1;
+    mesh->cache_grid_min_x = grid_min_x;
+    mesh->cache_grid_max_x = grid_max_x;
+    mesh->cache_grid_min_z = grid_min_z;
+    mesh->cache_grid_max_z = grid_max_z;
+    mesh->cache_radius = radius;
+    mesh->cache_cell_size = cell_size;
+    mesh->cache_palm_size = settings->palm_size;
+    mesh->cache_palm_count = settings->palm_count;
+    mesh->cache_palm_fruit_density = settings->palm_fruit_density;
+    mesh->cache_palm_render_radius = settings->palm_render_radius;
+    mesh->cache_terrain_base_height = settings->terrain_base_height;
+    mesh->cache_terrain_height_scale = settings->terrain_height_scale;
+    mesh->cache_terrain_roughness = settings->terrain_roughness;
+    mesh->cache_terrain_ridge_strength = settings->terrain_ridge_strength;
   }
 
   return 1;
@@ -1861,21 +2057,21 @@ static int palm_render_populate_grass_instances(
   lod_config.requested_radius = settings->palm_render_radius;
   lod_config.requested_radius_min = 80.0f;
   lod_config.requested_radius_max = 900.0f;
-  lod_config.radius_scale_low = 1.04f;
-  lod_config.radius_scale_high = 1.20f;
-  lod_config.effective_radius_min = 90.0f;
-  lod_config.effective_radius_max = 1080.0f;
-  lod_config.requested_instance_count = settings->palm_count * 48.0f;
+  lod_config.radius_scale_low = 1.00f;
+  lod_config.radius_scale_high = 1.08f;
+  lod_config.effective_radius_min = 72.0f;
+  lod_config.effective_radius_max = 760.0f;
+  lod_config.requested_instance_count = settings->palm_count * 20.0f;
   lod_config.requested_instance_count_min = 0.0f;
-  lod_config.requested_instance_count_max = 48000.0f;
-  lod_config.instance_budget_min = 160;
-  lod_config.instance_budget_max = 2400;
+  lod_config.requested_instance_count_max = 18000.0f;
+  lod_config.instance_budget_min = 72;
+  lod_config.instance_budget_max = 900;
   lod_config.source_vertex_count = (float)max_vertex_count;
   lod_config.fallback_vertex_count = 900.0f;
-  lod_config.vertex_budget_low = 2200000.0f;
-  lod_config.vertex_budget_high = 6200000.0f;
-  lod_config.cell_size_min = 4.0f;
-  lod_config.cell_size_max = 18.0f;
+  lod_config.vertex_budget_low = 1200000.0f;
+  lod_config.vertex_budget_high = 3200000.0f;
+  lod_config.cell_size_min = 6.0f;
+  lod_config.cell_size_max = 24.0f;
 
   lod_state = procedural_lod_resolve(quality, &lod_config);
   radius = lod_state.effective_radius;
@@ -1884,6 +2080,8 @@ static int palm_render_populate_grass_instances(
 
   if (effective_grass_target <= 0 || cell_size <= 0.0f)
   {
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
     return 1;
   }
 
@@ -1894,6 +2092,14 @@ static int palm_render_populate_grass_instances(
     const int grid_max_z = (int)ceilf((camera->z + radius) / cell_size);
     const size_t estimated_capacity = (size_t)(grid_max_x - grid_min_x + 1) * (size_t)(grid_max_z - grid_min_z + 1);
     int variant_index = 0;
+
+    if (palm_render_cache_matches(mesh, grid_min_x, grid_max_x, grid_min_z, grid_max_z, radius, cell_size, settings))
+    {
+      return 2;
+    }
+
+    palm_render_reset_instances(mesh);
+    mesh->cache_valid = 0;
 
     for (variant_index = 0; variant_index < mesh->variant_count; ++variant_index)
     {
@@ -1965,6 +2171,22 @@ static int palm_render_populate_grass_instances(
         variant->instance_count += 1;
       }
     }
+
+    mesh->cache_valid = 1;
+    mesh->cache_grid_min_x = grid_min_x;
+    mesh->cache_grid_max_x = grid_max_x;
+    mesh->cache_grid_min_z = grid_min_z;
+    mesh->cache_grid_max_z = grid_max_z;
+    mesh->cache_radius = radius;
+    mesh->cache_cell_size = cell_size;
+    mesh->cache_palm_size = settings->palm_size;
+    mesh->cache_palm_count = settings->palm_count;
+    mesh->cache_palm_fruit_density = settings->palm_fruit_density;
+    mesh->cache_palm_render_radius = settings->palm_render_radius;
+    mesh->cache_terrain_base_height = settings->terrain_base_height;
+    mesh->cache_terrain_height_scale = settings->terrain_height_scale;
+    mesh->cache_terrain_roughness = settings->terrain_roughness;
+    mesh->cache_terrain_ridge_strength = settings->terrain_ridge_strength;
   }
 
   return 1;

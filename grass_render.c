@@ -16,7 +16,7 @@ int grass_render_update(
   const SceneSettings* settings,
   const RendererQualityProfile* quality)
 {
-  return palm_render_update(mesh, camera, settings, quality);
+  return palm_render_update_category(mesh, PALM_RENDER_CATEGORY_GRASS, camera, settings, quality);
 }
 
 void grass_render_draw(const GrassRenderMesh* mesh)
