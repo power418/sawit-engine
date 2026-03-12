@@ -4,7 +4,32 @@ if(POLICY CMP0169)
   cmake_policy(SET CMP0169 OLD)
 endif()
 
-project(opengl_sky LANGUAGES C)
+project(opengl_sky LANGUAGES NONE)
+
+if(WIN32 AND CMAKE_GENERATOR STREQUAL "Unix Makefiles")
+  set(OPENGL_SKY_MSVC_LIKE_COMPILER FALSE)
+
+  if(CMAKE_C_COMPILER MATCHES [[(^|[/\\])(cl|clang-cl)(\.exe)?$]])
+    set(OPENGL_SKY_MSVC_LIKE_COMPILER TRUE)
+  elseif(DEFINED ENV{CC} AND "$ENV{CC}" MATCHES [[(^|[/\\])(cl|clang-cl)(\.exe)?$]])
+    set(OPENGL_SKY_MSVC_LIKE_COMPILER TRUE)
+  elseif(DEFINED ENV{VCINSTALLDIR})
+    set(OPENGL_SKY_MSVC_LIKE_COMPILER TRUE)
+  endif()
+
+  if(OPENGL_SKY_MSVC_LIKE_COMPILER)
+    message(FATAL_ERROR
+      "MSVC-style compilers cannot be used with the \"Unix Makefiles\" generator in this environment. "
+      "The Git/MSYS shell rewrites linker flags such as /nologo into filesystem paths, which breaks the compiler check. "
+      "Configure with a native MSVC generator instead, for example:\n"
+      "  cmake --preset windows-msvc-debug\n"
+      "or\n"
+      "  cmake -S . -B build/msvc-debug -G \"Visual Studio 18 2026\" -A x64"
+    )
+  endif()
+endif()
+
+enable_language(C)
 
 if(APPLE)
   enable_language(OBJCXX)
