@@ -1,5 +1,6 @@
 CONFIG ?= Release
 COMPILER ?= clang
+RC ?= llvm-rc
 
 ifeq ($(OS),Windows_NT)
 EXE := .exe
@@ -71,7 +72,16 @@ PROJECT_OBJECTS := \
   $(OBJ_DIR)/tree_render.obj
 
 GLEW_OBJECT := $(OBJ_DIR)/glew.obj
-OBJECTS := $(PROJECT_OBJECTS) $(GLEW_OBJECT)
+RESOURCE_FILE := $(OBJ_DIR)/shaders.res
+RESOURCE_DEPENDENCIES := \
+  resource.h \
+  res/icon/sawit_app.ico \
+  shaders/sky.vert.glsl \
+  shaders/sky.frag.glsl \
+  shaders/post.vert.glsl \
+  shaders/post.frag.glsl
+
+OBJECTS := $(PROJECT_OBJECTS) $(GLEW_OBJECT) $(RESOURCE_FILE)
 DEPS := $(PROJECT_OBJECTS:.obj=.d) $(GLEW_OBJECT:.obj=.d)
 
 CPPFLAGS := -I. -I$(GLEW_ROOT)/include -DGLEW_STATIC -DGLEW_NO_GLU
@@ -80,7 +90,7 @@ COMMON_CFLAGS := -std=c11 $(WARNINGS)
 GLEW_CFLAGS := -fno-builtin -fno-stack-protector
 DEPFLAGS := -MMD -MP
 LDFLAGS := -mwindows
-LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lpdh -luser32 -ladvapi32
+LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lole32 -loleaut32 -lpdh -luser32 -ladvapi32 -lwbemuuid
 
 ifeq ($(CONFIG),Debug)
 CONFIG_CFLAGS := -O0 -g
@@ -112,6 +122,9 @@ $(OBJ_DIR)/%.obj: %.c $(GLEW_READY) | $(OBJ_DIR)
 
 $(GLEW_OBJECT): $(GLEW_READY) | $(OBJ_DIR)
 	$(COMPILER) $(CPPFLAGS) $(CFLAGS) $(GLEW_CFLAGS) $(DEPFLAGS) -MF $(@:.obj=.d) -c $(GLEW_SOURCE) -o $@
+
+$(RESOURCE_FILE): shaders.rc $(RESOURCE_DEPENDENCIES) | $(OBJ_DIR)
+	$(RC) /FO $@ $<
 
 $(TARGET): $(OBJECTS) | $(BUILD_DIR)
 	$(COMPILER) $(OBJECTS) $(LDFLAGS) -o $@ $(LDLIBS)

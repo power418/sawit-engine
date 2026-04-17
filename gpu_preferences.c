@@ -22,6 +22,7 @@ static GpuPreferenceMode gpu_preferences_read_selected_mode(void);
 static int gpu_preferences_write_selected_mode(GpuPreferenceMode mode);
 static int gpu_preferences_get_executable_path_wide(wchar_t* buffer, size_t buffer_count);
 static int gpu_preferences_find_adapter_index_by_luid(const LUID* luids, int adapter_count, LUID target_luid);
+static void gpu_preferences_assign_task_manager_indices(GpuPreferenceInfo* info);
 
 static void gpu_preferences_copy_utf8(char* destination, size_t destination_size, const char* source)
 {
@@ -204,6 +205,69 @@ static int gpu_preferences_find_adapter_index_by_luid(const LUID* luids, int ada
   return -1;
 }
 
+static void gpu_preferences_assign_task_manager_indices(GpuPreferenceInfo* info)
+{
+  int assigned_index = 0;
+  int adapter_index = 0;
+  const int use_preference_order =
+    info != NULL &&
+    info->minimum_power_index >= 0 &&
+    info->minimum_power_index < info->adapter_count &&
+    info->high_performance_index >= 0 &&
+    info->high_performance_index < info->adapter_count &&
+    info->minimum_power_index != info->high_performance_index;
+
+  if (info == NULL)
+  {
+    return;
+  }
+
+  for (adapter_index = 0; adapter_index < info->adapter_count; ++adapter_index)
+  {
+    info->adapters[adapter_index].task_manager_index = GPU_PREFERENCES_INVALID_TASK_MANAGER_INDEX;
+  }
+
+  if (use_preference_order != 0)
+  {
+    info->adapters[info->minimum_power_index].task_manager_index = assigned_index;
+    assigned_index += 1;
+    info->adapters[info->high_performance_index].task_manager_index = assigned_index;
+    assigned_index += 1;
+  }
+
+  while (assigned_index < info->adapter_count)
+  {
+    int best_candidate = -1;
+    unsigned int best_memory = 0U;
+
+    for (adapter_index = 0; adapter_index < info->adapter_count; ++adapter_index)
+    {
+      const GpuAdapterInfo* adapter = &info->adapters[adapter_index];
+
+      if (adapter->task_manager_index != GPU_PREFERENCES_INVALID_TASK_MANAGER_INDEX)
+      {
+        continue;
+      }
+
+      if (best_candidate < 0 ||
+        adapter->dedicated_video_memory_mb < best_memory ||
+        (adapter->dedicated_video_memory_mb == best_memory && adapter_index < best_candidate))
+      {
+        best_candidate = adapter_index;
+        best_memory = adapter->dedicated_video_memory_mb;
+      }
+    }
+
+    if (best_candidate < 0)
+    {
+      break;
+    }
+
+    info->adapters[best_candidate].task_manager_index = assigned_index;
+    assigned_index += 1;
+  }
+}
+
 int gpu_preferences_query(GpuPreferenceInfo* out_info)
 {
   IDXGIFactory6* factory = NULL;
@@ -257,6 +321,9 @@ int gpu_preferences_query(GpuPreferenceInfo* out_info)
         GpuAdapterInfo* target_info = &out_info->adapters[stored_adapter_count];
         gpu_preferences_copy_wide_to_utf8(target_info->name, sizeof(target_info->name), description.Description);
         target_info->dedicated_video_memory_mb = (unsigned int)((description.DedicatedVideoMemory + (1024U * 1024U - 1U)) / (1024U * 1024U));
+        target_info->luid_low_part = description.AdapterLuid.LowPart;
+        target_info->luid_high_part = description.AdapterLuid.HighPart;
+        target_info->task_manager_index = GPU_PREFERENCES_INVALID_TASK_MANAGER_INDEX;
         stored_luids[stored_adapter_count] = description.AdapterLuid;
         stored_adapter_count += 1;
       }
@@ -314,6 +381,7 @@ int gpu_preferences_query(GpuPreferenceInfo* out_info)
     IDXGIAdapter1_Release(preferred_adapter);
   }
 
+  gpu_preferences_assign_task_manager_indices(out_info);
   IDXGIFactory6_Release(factory);
   diagnostics_logf(
     "gpu_preferences_query: adapters=%d total=%d selected=%d power=%d high=%d",
@@ -425,6 +493,50 @@ const char* gpu_preferences_get_mode_short_label(GpuPreferenceMode mode)
   }
 }
 
+const GpuAdapterInfo* gpu_preferences_find_adapter_by_task_manager_index(const GpuPreferenceInfo* info, int task_manager_index)
+{
+  int adapter_index = 0;
+
+  if (info == NULL || task_manager_index < 0)
+  {
+    return NULL;
+  }
+
+  for (adapter_index = 0; adapter_index < info->adapter_count; ++adapter_index)
+  {
+    if (info->adapters[adapter_index].task_manager_index == task_manager_index)
+    {
+      return &info->adapters[adapter_index];
+    }
+  }
+
+  return NULL;
+}
+
+const GpuAdapterInfo* gpu_preferences_find_adapter_by_luid(
+  const GpuPreferenceInfo* info,
+  unsigned int luid_low_part,
+  int luid_high_part)
+{
+  int adapter_index = 0;
+
+  if (info == NULL)
+  {
+    return NULL;
+  }
+
+  for (adapter_index = 0; adapter_index < info->adapter_count; ++adapter_index)
+  {
+    const GpuAdapterInfo* adapter = &info->adapters[adapter_index];
+    if (adapter->luid_low_part == luid_low_part && adapter->luid_high_part == luid_high_part)
+    {
+      return adapter;
+    }
+  }
+
+  return NULL;
+}
+
 #else
 
 #include <string.h>
@@ -517,6 +629,24 @@ const char* gpu_preferences_get_mode_short_label(GpuPreferenceMode mode)
     default:
       return "Auto";
   }
+}
+
+const GpuAdapterInfo* gpu_preferences_find_adapter_by_task_manager_index(const GpuPreferenceInfo* info, int task_manager_index)
+{
+  (void)info;
+  (void)task_manager_index;
+  return NULL;
+}
+
+const GpuAdapterInfo* gpu_preferences_find_adapter_by_luid(
+  const GpuPreferenceInfo* info,
+  unsigned int luid_low_part,
+  int luid_high_part)
+{
+  (void)info;
+  (void)luid_low_part;
+  (void)luid_high_part;
+  return NULL;
 }
 
 #endif

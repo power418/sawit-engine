@@ -1,6 +1,22 @@
 #ifndef SCENE_SETTINGS_H
 #define SCENE_SETTINGS_H
 
+enum
+{
+  OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH = 128,
+  OVERLAY_METRICS_THERMAL_LABEL_LENGTH = 96,
+  OVERLAY_METRICS_HEALTH_SUMMARY_LENGTH = 96
+};
+
+typedef enum OverlayHealthStatus
+{
+  OVERLAY_HEALTH_STATUS_UNKNOWN = 0,
+  OVERLAY_HEALTH_STATUS_STABLE,
+  OVERLAY_HEALTH_STATUS_WARM,
+  OVERLAY_HEALTH_STATUS_STRESSED,
+  OVERLAY_HEALTH_STATUS_CRITICAL
+} OverlayHealthStatus;
+
 typedef struct SceneSettings
 {
   float sun_distance_mkm;
@@ -40,6 +56,22 @@ typedef struct OverlayMetrics
   int placed_block_count;
   int target_active;
   unsigned int stats_sample_index;
+  float system_memory_percent;
+  float system_memory_used_mb;
+  float system_memory_total_mb;
+  float gpu0_memory_usage_mb;
+  float gpu1_memory_usage_mb;
+  float thermal_zone_temperature_c;
+  float gpu_temperature_c;
+  int thermal_zone_temperature_available;
+  int gpu_temperature_available;
+  int health_status;
+  int active_gpu_task_manager_index;
+  char gpu0_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];
+  char gpu1_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];
+  char active_gpu_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];
+  char thermal_zone_label[OVERLAY_METRICS_THERMAL_LABEL_LENGTH];
+  char health_summary[OVERLAY_METRICS_HEALTH_SUMMARY_LENGTH];
 } OverlayMetrics;
 
 static inline SceneSettings scene_settings_default(void)

@@ -1,5 +1,7 @@
 #include "resource.h"
 
+IDI_APP_ICON ICON "res/icon/sawit_app.ico"
+
 IDR_SHADER_SKY_VERT RCDATA "shaders/sky.vert.glsl"
 IDR_SHADER_SKY_FRAG RCDATA "shaders/sky.frag.glsl"
 IDR_SHADER_POST_VERT RCDATA "shaders/post.vert.glsl"

@@ -3,6 +3,7 @@
 #include "diagnostics.h"
 #include "gl_headers.h"
 #include "keymap.h"
+#include "resource.h"
 
 #include <math.h>
 #include <string.h>
@@ -12,6 +13,7 @@ static const wchar_t k_platform_window_class_name[] = L"OpenGLSkyWindowClass";
 static LRESULT CALLBACK platform_window_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param);
 static int platform_register_window_class(HINSTANCE instance);
 static int platform_bootstrap_wgl(HINSTANCE instance);
+static HICON platform_load_icon_resource(HINSTANCE instance, int resource_id, int system_metric_x, int system_metric_y);
 static int platform_set_legacy_pixel_format(HDC device_context);
 static int platform_set_modern_pixel_format(HDC device_context);
 static int platform_register_raw_mouse_device(HWND window);
@@ -736,27 +738,44 @@ static LRESULT CALLBACK platform_window_proc(HWND window, UINT message, WPARAM w
 static int platform_register_window_class(HINSTANCE instance)
 {
   static int is_registered = 0;
+  WNDCLASSEXW window_class = { 0 };
 
   if (is_registered != 0)
   {
     return 1;
   }
 
-  WNDCLASSW window_class = { 0 };
+  window_class.cbSize = sizeof(window_class);
   window_class.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
   window_class.lpfnWndProc = platform_window_proc;
   window_class.hInstance = instance;
   window_class.hbrBackground = NULL;
   window_class.hCursor = LoadCursorA(NULL, IDC_ARROW);
+  window_class.hIcon = platform_load_icon_resource(instance, IDI_APP_ICON, SM_CXICON, SM_CYICON);
+  window_class.hIconSm = platform_load_icon_resource(instance, IDI_APP_ICON, SM_CXSMICON, SM_CYSMICON);
   window_class.lpszClassName = k_platform_window_class_name;
 
-  if (RegisterClassW(&window_class) == 0U && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+  if (RegisterClassExW(&window_class) == 0U && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
   {
     return 0;
   }
 
   is_registered = 1;
   return 1;
+}
+
+static HICON platform_load_icon_resource(HINSTANCE instance, int resource_id, int system_metric_x, int system_metric_y)
+{
+  const int width = GetSystemMetrics(system_metric_x);
+  const int height = GetSystemMetrics(system_metric_y);
+
+  return (HICON)LoadImageW(
+    instance,
+    MAKEINTRESOURCEW(resource_id),
+    IMAGE_ICON,
+    (width > 0) ? width : 0,
+    (height > 0) ? height : 0,
+    LR_DEFAULTCOLOR | LR_SHARED);
 }
 
 static int platform_bootstrap_wgl(HINSTANCE instance)

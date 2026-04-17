@@ -220,6 +220,10 @@ endif()
 
 enable_language(C)
 
+if("${OPENGL_SKY_PLATFORM_OS}" STREQUAL "Windows")
+  enable_language(RC)
+endif()
+
 if("${OPENGL_SKY_PLATFORM_OS}" STREQUAL "Darwin")
   enable_language(OBJCXX)
 endif()
@@ -370,6 +374,7 @@ else()
     list(APPEND OPENGL_SKY_SOURCES
       keymap.c
       platform_win32.c
+      shaders.rc
     )
   elseif("${OPENGL_SKY_PLATFORM_OS}" STREQUAL "Darwin")
     list(APPEND OPENGL_SKY_SOURCES
@@ -435,8 +440,11 @@ else()
         dxgi
         dxguid
         gdi32
+        ole32
+        oleaut32
         pdh
         user32
+        wbemuuid
         winmm
     )
   elseif("${OPENGL_SKY_PLATFORM_OS}" STREQUAL "Darwin")

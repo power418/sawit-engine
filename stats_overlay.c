@@ -35,7 +35,6 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
 
 #else
 
-#include "block_world.h"
 #include "diagnostics.h"
 #include "player_controller.h"
 
@@ -162,28 +161,46 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
   const float cpu_usage = fminf(fmaxf(active_overlay->metrics.cpu_usage_percent, 0.0f), 100.0f);
   const float gpu0_usage = fminf(fmaxf(active_overlay->metrics.gpu0_usage_percent, 0.0f), 100.0f);
   const float gpu1_usage = fminf(fmaxf(active_overlay->metrics.gpu1_usage_percent, 0.0f), 100.0f);
+  const float system_memory_usage = fminf(fmaxf(active_overlay->metrics.system_memory_percent, 0.0f), 100.0f);
+  const int thermal_available =
+    active_overlay->metrics.gpu_temperature_available != 0 ||
+    active_overlay->metrics.thermal_zone_temperature_available != 0;
+  const float display_temperature =
+    (active_overlay->metrics.gpu_temperature_available != 0)
+      ? active_overlay->metrics.gpu_temperature_c
+      : active_overlay->metrics.thermal_zone_temperature_c;
+  const char* temperature_label =
+    (active_overlay->metrics.gpu_temperature_available != 0)
+      ? "GPU"
+      : ((active_overlay->metrics.thermal_zone_temperature_available != 0) ? "ZONE" : "N/A");
+  const char* health_label = "UNKNOWN";
   const float hud_width = 308.0f;
-  const float hud_height = 284.0f;
+  const float hud_height = 418.0f;
   const float hud_margin = 12.0f;
   const float hud_left = (float)width - hud_width - hud_margin;
   const float hud_top = 12.0f;
   const float hud_right = hud_left + hud_width;
   const float hud_bottom = hud_top + hud_height;
   const float graph_left = hud_left + 14.0f;
-  const float graph_top = hud_top + 188.0f;
+  const float graph_top = hud_top + 284.0f;
   const float graph_right = hud_right - 14.0f;
-  const float graph_bottom = hud_top + 224.0f;
+  const float graph_bottom = hud_top + 324.0f;
   const float info_left = hud_left + 14.0f;
   const float info_right = hud_left + 170.0f;
   const char* mode_label = player_controller_get_mode_label((PlayerMode)active_overlay->metrics.player_mode);
-  const char* block_label = block_world_get_block_label((BlockType)active_overlay->metrics.selected_block_type);
   float fps_r = 0.42f;
   float fps_g = 0.96f;
   float fps_b = 0.38f;
   float frame_min_ms = current_frame_ms;
   float frame_max_ms = current_frame_ms;
+  float health_r = 0.82f;
+  float health_g = 0.86f;
+  float health_b = 0.90f;
   char line_buffer[96] = { 0 };
   char value_buffer[64] = { 0 };
+  char active_gpu_buffer[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH] = { 0 };
+  char gpu0_name_buffer[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH] = { 0 };
+  char gpu1_name_buffer[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH] = { 0 };
 
   if (overlay == NULL ||
     overlay->small_font_base == 0U ||
@@ -224,6 +241,67 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
     fps_b = 0.24f;
   }
 
+  switch ((OverlayHealthStatus)active_overlay->metrics.health_status)
+  {
+    case OVERLAY_HEALTH_STATUS_STABLE:
+      health_label = "STABLE";
+      health_r = 0.38f;
+      health_g = 0.96f;
+      health_b = 0.58f;
+      break;
+    case OVERLAY_HEALTH_STATUS_WARM:
+      health_label = "WARM";
+      health_r = 0.98f;
+      health_g = 0.82f;
+      health_b = 0.28f;
+      break;
+    case OVERLAY_HEALTH_STATUS_STRESSED:
+      health_label = "STRESSED";
+      health_r = 0.98f;
+      health_g = 0.52f;
+      health_b = 0.26f;
+      break;
+    case OVERLAY_HEALTH_STATUS_CRITICAL:
+      health_label = "CRITICAL";
+      health_r = 1.0f;
+      health_g = 0.26f;
+      health_b = 0.22f;
+      break;
+    case OVERLAY_HEALTH_STATUS_UNKNOWN:
+    default:
+      health_label = "UNKNOWN";
+      break;
+  }
+
+  if (active_overlay->metrics.active_gpu_task_manager_index >= 0)
+  {
+    (void)snprintf(
+      active_gpu_buffer,
+      sizeof(active_gpu_buffer),
+      "ACTIVE GPU %d | %s",
+      active_overlay->metrics.active_gpu_task_manager_index,
+      active_overlay->metrics.active_gpu_name[0] != '\0' ? active_overlay->metrics.active_gpu_name : "OpenGL renderer");
+  }
+  else
+  {
+    (void)snprintf(
+      active_gpu_buffer,
+      sizeof(active_gpu_buffer),
+      "%s",
+      active_overlay->metrics.active_gpu_name[0] != '\0' ? active_overlay->metrics.active_gpu_name : "OpenGL renderer");
+  }
+  stats_overlay_copy_text_fit(active_gpu_buffer, sizeof(active_gpu_buffer), active_gpu_buffer, 34);
+  stats_overlay_copy_text_fit(
+    gpu0_name_buffer,
+    sizeof(gpu0_name_buffer),
+    active_overlay->metrics.gpu0_name[0] != '\0' ? active_overlay->metrics.gpu0_name : "not mapped",
+    18);
+  stats_overlay_copy_text_fit(
+    gpu1_name_buffer,
+    sizeof(gpu1_name_buffer),
+    active_overlay->metrics.gpu1_name[0] != '\0' ? active_overlay->metrics.gpu1_name : "not mapped",
+    18);
+
   glUseProgram(0);
   glBindVertexArray(0);
   glBindTexture(GL_TEXTURE_2D, 0);
@@ -248,54 +326,92 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
 
   stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 28.0f, 0.18f, 0.90f, 0.54f, 1.0f, "ENGINE");
   stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_right - 100.0f, hud_top + 26.0f, 0.94f, 0.95f, 0.97f, 0.96f, "REALTIME");
+  stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_left + 12.0f, hud_top + 44.0f, 0.86f, 0.90f, 0.94f, 0.90f, active_gpu_buffer);
 
-  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 56.0f, 0.18f, 0.90f, 0.48f, 1.0f, "GPU 0");
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 72.0f, 0.18f, 0.90f, 0.48f, 1.0f, "GPU 0");
   (void)snprintf(value_buffer, sizeof(value_buffer), "%.0f%%", gpu0_usage);
-  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 54.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 70.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, hud_left + 86.0f, hud_top + 70.0f, 0.74f, 0.80f, 0.86f, 0.88f, gpu0_name_buffer);
 
-  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 82.0f, 0.20f, 0.78f, 0.94f, 1.0f, "GPU 1");
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 98.0f, 0.20f, 0.78f, 0.94f, 1.0f, "GPU 1");
   (void)snprintf(value_buffer, sizeof(value_buffer), "%.0f%%", gpu1_usage);
-  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 80.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 96.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, hud_left + 86.0f, hud_top + 96.0f, 0.74f, 0.80f, 0.86f, 0.88f, gpu1_name_buffer);
 
-  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 108.0f, 0.36f, 0.58f, 0.98f, 1.0f, "CPU");
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 124.0f, 0.36f, 0.58f, 0.98f, 1.0f, "CPU");
   (void)snprintf(value_buffer, sizeof(value_buffer), "%.0f%%", cpu_usage);
-  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 106.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 122.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
 
-  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 136.0f, 0.96f, 0.36f, 0.32f, 1.0f, "OPENGL");
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 150.0f, 0.84f, 0.72f, 0.26f, 1.0f, "RAM");
+  (void)snprintf(value_buffer, sizeof(value_buffer), "%.0f%%", system_memory_usage);
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 148.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 176.0f, 0.96f, 0.44f, 0.30f, 1.0f, "TEMP");
+  if (thermal_available != 0)
+  {
+    (void)snprintf(value_buffer, sizeof(value_buffer), "%s %.1fC", temperature_label, display_temperature);
+  }
+  else
+  {
+    (void)snprintf(value_buffer, sizeof(value_buffer), "N/A");
+  }
+  stats_overlay_draw_text_right(overlay, overlay->small_font_base, hud_right - 12.0f, hud_top + 174.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 202.0f, health_r, health_g, health_b, 1.0f, "HEALTH");
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 12.0f, hud_top + 200.0f, health_r, health_g, health_b, 1.0f, health_label);
+
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 230.0f, 0.96f, 0.36f, 0.32f, 1.0f, "OPENGL");
   (void)snprintf(value_buffer, sizeof(value_buffer), "%.0f", fps_value);
-  stats_overlay_draw_text_right(overlay, overlay->hero_font_base, hud_right - 108.0f, hud_top + 134.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
-  stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_right - 96.0f, hud_top + 132.0f, fps_r, fps_g, fps_b, 1.0f, "FPS");
+  stats_overlay_draw_text_right(overlay, overlay->hero_font_base, hud_right - 108.0f, hud_top + 228.0f, 0.97f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_right - 96.0f, hud_top + 226.0f, fps_r, fps_g, fps_b, 1.0f, "FPS");
 
-  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 164.0f, 0.96f, 0.44f, 0.48f, 1.0f, "Frametime");
+  stats_overlay_draw_text_shadow(overlay, overlay->large_font_base, hud_left + 12.0f, hud_top + 258.0f, 0.96f, 0.44f, 0.48f, 1.0f, "Frametime");
   (void)snprintf(value_buffer, sizeof(value_buffer), "%.1f", current_frame_ms);
-  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 38.0f, hud_top + 162.0f, 0.98f, 0.98f, 0.99f, 1.0f, value_buffer);
-  stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_right - 28.0f, hud_top + 160.0f, 0.92f, 0.94f, 0.98f, 0.98f, "MS");
+  stats_overlay_draw_text_right(overlay, overlay->large_font_base, hud_right - 38.0f, hud_top + 256.0f, 0.98f, 0.98f, 0.99f, 1.0f, value_buffer);
+  stats_overlay_draw_text_shadow(overlay, overlay->small_font_base, hud_right - 28.0f, hud_top + 254.0f, 0.92f, 0.94f, 0.98f, 0.98f, "MS");
   (void)snprintf(line_buffer, sizeof(line_buffer), "min: %.1fms, max: %.1fms", frame_min_ms, frame_max_ms);
-  stats_overlay_draw_text_right(overlay, overlay->small_font_base, hud_right - 12.0f, hud_top + 178.0f, 0.90f, 0.92f, 0.95f, 0.90f, line_buffer);
+  stats_overlay_draw_text_right(overlay, overlay->small_font_base, hud_right - 12.0f, hud_top + 272.0f, 0.90f, 0.92f, 0.95f, 0.90f, line_buffer);
 
   stats_overlay_draw_frame_graph(overlay, graph_left, graph_top, graph_right, graph_bottom, fps_r, fps_g, fps_b);
 
-  stats_overlay_draw_rect(hud_left + 14.0f, hud_top + 234.0f, hud_right - 14.0f, hud_top + 235.0f, 0.18f, 0.22f, 0.25f, 0.84f);
+  stats_overlay_draw_rect(hud_left + 14.0f, hud_top + 334.0f, hud_right - 14.0f, hud_top + 335.0f, 0.18f, 0.22f, 0.25f, 0.84f);
 
   (void)snprintf(line_buffer, sizeof(line_buffer), "RES %dx%d", width, height);
-  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 250.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 350.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
   (void)snprintf(line_buffer, sizeof(line_buffer), "FOV %.0f", active_overlay->settings.camera_fov_degrees);
-  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 250.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 350.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
 
-  (void)snprintf(line_buffer, sizeof(line_buffer), "MODE %s", mode_label);
-  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 264.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
-  (void)snprintf(line_buffer, sizeof(line_buffer), "BLK %s %03d", block_label, active_overlay->metrics.placed_block_count);
-  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 264.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+  (void)snprintf(line_buffer, sizeof(line_buffer), "TM0 %s", gpu0_name_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 364.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+  (void)snprintf(line_buffer, sizeof(line_buffer), "TM1 %s", gpu1_name_buffer);
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 378.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
 
   (void)snprintf(
     line_buffer,
     sizeof(line_buffer),
-    "FOG %.0f%%  CLD %s",
-    active_overlay->settings.fog_density * 100.0f,
-    active_overlay->settings.clouds_enabled != 0 ? "ON" : "OFF");
-  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 278.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
-  (void)snprintf(line_buffer, sizeof(line_buffer), "TGT %s", active_overlay->metrics.target_active != 0 ? "ON" : "OFF");
-  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 278.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+    "MEM %.0f/%.0f",
+    active_overlay->metrics.system_memory_used_mb,
+    active_overlay->metrics.system_memory_total_mb);
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 392.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+  (void)snprintf(
+    line_buffer,
+    sizeof(line_buffer),
+    "VRAM %.0f/%.0f",
+    active_overlay->metrics.gpu0_memory_usage_mb,
+    active_overlay->metrics.gpu1_memory_usage_mb);
+  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 392.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+
+  if (active_overlay->metrics.active_gpu_task_manager_index >= 0)
+  {
+    (void)snprintf(line_buffer, sizeof(line_buffer), "ACTIVE GPU %d", active_overlay->metrics.active_gpu_task_manager_index);
+  }
+  else
+  {
+    (void)snprintf(line_buffer, sizeof(line_buffer), "ACTIVE GPU ?");
+  }
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 406.0f, health_r, health_g, health_b, 0.96f, line_buffer);
+  (void)snprintf(line_buffer, sizeof(line_buffer), "MODE %s", mode_label);
+  stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 406.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
 
   stats_overlay_draw_debug_console(overlay, width, height, active_overlay);
 

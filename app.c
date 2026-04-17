@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 int app_run(void)
 {
@@ -54,6 +55,8 @@ int app_run(void)
   app_apply_renderer_quality_defaults(&app);
   platform_set_render_quality_preset(&app.platform, renderer_get_quality_preset(&app.renderer));
   system_monitor_create(&app.system_monitor);
+  system_monitor_update(&app.system_monitor, &app.system_usage);
+  app_log_hardware_profile(&app);
   platform_set_scene_settings(&app.platform, &app.scene_settings);
   renderer_sync_terrain_render_sampling(&app.renderer, &app.player.camera);
   app.previous_time_seconds = platform_get_time_seconds(&app.platform);
@@ -216,6 +219,7 @@ int app_run(void)
         app.stats_update_elapsed_seconds += delta_seconds;
         app.stats_accumulated_delta_seconds += delta_seconds;
         app.stats_accumulated_frames += 1;
+        app.runtime_log_elapsed_seconds += delta_seconds;
 
         if (app.stats_display_metrics.stats_sample_index == 0U ||
           app.stats_update_elapsed_seconds >= k_app_stats_update_interval_seconds)
@@ -246,9 +250,20 @@ int app_run(void)
       app.stats_display_metrics.selected_block_type = (int)app.player.selected_block;
       app.stats_display_metrics.placed_block_count = block_world_get_cell_count(&app.block_world);
       app.stats_display_metrics.target_active = (target != NULL && target->valid != 0);
+      app_update_runtime_telemetry(&app);
 
       metrics = app.stats_display_metrics;
       platform_update_overlay_metrics(&app.platform, &metrics);
+
+      if (app.stats_display_metrics.stats_sample_index != 0U &&
+        (app.last_health_status == OVERLAY_HEALTH_STATUS_UNKNOWN ||
+          app.runtime_log_elapsed_seconds >= k_app_runtime_log_interval_seconds ||
+          app.stats_display_metrics.health_status != app.last_health_status))
+      {
+        app_log_runtime_telemetry(&app);
+        app.runtime_log_elapsed_seconds = 0.0f;
+        app.last_health_status = app.stats_display_metrics.health_status;
+      }
 
       if (app.player.mode == PLAYER_MODE_SURVIVAL && app.player.camera.y < terrain_floor + player_controller_get_eye_height(&app.player))
       {
@@ -311,6 +326,420 @@ static void app_apply_renderer_quality_defaults(AppState* app)
         app->scene_settings.palm_render_radius);
     }
   }
+}
+
+static void app_copy_utf8(char* destination, size_t destination_size, const char* source)
+{
+  size_t length = 0U;
+
+  if (destination == NULL || destination_size == 0U)
+  {
+    return;
+  }
+
+  destination[0] = '\0';
+  if (source == NULL)
+  {
+    return;
+  }
+
+  length = strlen(source);
+  if (length >= destination_size)
+  {
+    length = destination_size - 1U;
+  }
+
+  memcpy(destination, source, length);
+  destination[length] = '\0';
+}
+
+static const char* app_get_health_status_label(int status)
+{
+  switch ((OverlayHealthStatus)status)
+  {
+    case OVERLAY_HEALTH_STATUS_STABLE:
+      return "STABLE";
+    case OVERLAY_HEALTH_STATUS_WARM:
+      return "WARM";
+    case OVERLAY_HEALTH_STATUS_STRESSED:
+      return "STRESSED";
+    case OVERLAY_HEALTH_STATUS_CRITICAL:
+      return "CRITICAL";
+    case OVERLAY_HEALTH_STATUS_UNKNOWN:
+    default:
+      return "UNKNOWN";
+  }
+}
+
+static const SystemGpuAdapterSample* app_find_system_gpu_adapter_sample(
+  const SystemUsageSample* system_usage,
+  unsigned int luid_low_part,
+  int luid_high_part)
+{
+  int adapter_index = 0;
+
+  if (system_usage == NULL)
+  {
+    return NULL;
+  }
+
+  for (adapter_index = 0; adapter_index < system_usage->gpu_adapter_count; ++adapter_index)
+  {
+    const SystemGpuAdapterSample* adapter = &system_usage->gpu_adapters[adapter_index];
+    if (adapter->luid_low_part == luid_low_part && adapter->luid_high_part == luid_high_part)
+    {
+      return adapter;
+    }
+  }
+
+  return NULL;
+}
+
+static int app_evaluate_health_status(
+  const OverlayMetrics* metrics,
+  const SystemUsageSample* system_usage,
+  char* out_summary,
+  size_t out_summary_size)
+{
+  const float fps = (metrics != NULL) ? metrics->frames_per_second : 0.0f;
+  const float frame_time_ms = (metrics != NULL) ? metrics->frame_time_ms : 0.0f;
+  const float cpu_percent = (system_usage != NULL) ? system_usage->cpu_percent : 0.0f;
+  const float gpu_percent =
+    (metrics != NULL && metrics->gpu0_usage_percent > metrics->gpu1_usage_percent)
+      ? metrics->gpu0_usage_percent
+      : ((metrics != NULL) ? metrics->gpu1_usage_percent : 0.0f);
+  const float memory_percent = (system_usage != NULL) ? system_usage->system_memory_percent : 0.0f;
+  const int thermal_available =
+    (system_usage != NULL) &&
+    (system_usage->gpu_temperature_available != 0 || system_usage->thermal_zone_temperature_available != 0);
+  const float temperature_c =
+    (system_usage != NULL && system_usage->gpu_temperature_available != 0)
+      ? system_usage->gpu_temperature_c
+      : ((system_usage != NULL) ? system_usage->thermal_zone_temperature_c : 0.0f);
+
+  if (out_summary != NULL && out_summary_size > 0U)
+  {
+    out_summary[0] = '\0';
+  }
+
+  if (fps <= 0.01f && frame_time_ms <= 0.01f)
+  {
+    app_copy_utf8(out_summary, out_summary_size, "Collecting baseline");
+    return OVERLAY_HEALTH_STATUS_UNKNOWN;
+  }
+
+  if ((thermal_available != 0 && temperature_c >= 88.0f) ||
+    frame_time_ms >= 50.0f ||
+    (fps > 0.0f && fps < 20.0f) ||
+    memory_percent >= 95.0f)
+  {
+    if (thermal_available != 0 && temperature_c >= 88.0f)
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Thermal critical");
+    }
+    else if (memory_percent >= 95.0f)
+    {
+      app_copy_utf8(out_summary, out_summary_size, "RAM nearly full");
+    }
+    else
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Frame pacing critical");
+    }
+    return OVERLAY_HEALTH_STATUS_CRITICAL;
+  }
+
+  if ((thermal_available != 0 && temperature_c >= 80.0f) ||
+    frame_time_ms >= 33.0f ||
+    (fps > 0.0f && fps < 30.0f) ||
+    cpu_percent >= 96.0f ||
+    gpu_percent >= 98.0f ||
+    memory_percent >= 90.0f)
+  {
+    if (thermal_available != 0 && temperature_c >= 80.0f)
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Thermal elevated");
+    }
+    else if (memory_percent >= 90.0f)
+    {
+      app_copy_utf8(out_summary, out_summary_size, "RAM pressure high");
+    }
+    else
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Load saturation");
+    }
+    return OVERLAY_HEALTH_STATUS_STRESSED;
+  }
+
+  if ((thermal_available != 0 && temperature_c >= 72.0f) ||
+    frame_time_ms >= 22.0f ||
+    (fps > 0.0f && fps < 50.0f) ||
+    cpu_percent >= 82.0f ||
+    gpu_percent >= 86.0f ||
+    memory_percent >= 80.0f)
+  {
+    if (thermal_available != 0 && temperature_c >= 72.0f)
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Thermal warming up");
+    }
+    else
+    {
+      app_copy_utf8(out_summary, out_summary_size, "Performance dipping");
+    }
+    return OVERLAY_HEALTH_STATUS_WARM;
+  }
+
+  app_copy_utf8(out_summary, out_summary_size, "Stable");
+  return OVERLAY_HEALTH_STATUS_STABLE;
+}
+
+static void app_update_runtime_telemetry(AppState* app)
+{
+  OverlayMetrics* metrics = NULL;
+  const GpuPreferenceInfo* gpu_info = NULL;
+  const GpuAdapterInfo* gpu0_adapter = NULL;
+  const GpuAdapterInfo* gpu1_adapter = NULL;
+  const SystemGpuAdapterSample* gpu0_sample = NULL;
+  const SystemGpuAdapterSample* gpu1_sample = NULL;
+  int adapter_index = 0;
+  int active_gpu_task_manager_index = GPU_PREFERENCES_INVALID_TASK_MANAGER_INDEX;
+  char health_summary[OVERLAY_METRICS_HEALTH_SUMMARY_LENGTH] = { 0 };
+  const char* active_gpu_name = NULL;
+
+  if (app == NULL)
+  {
+    return;
+  }
+
+  metrics = &app->stats_display_metrics;
+  gpu_info = &app->platform.overlay.gpu_info;
+
+  metrics->gpu0_usage_percent = 0.0f;
+  metrics->gpu1_usage_percent = 0.0f;
+  metrics->gpu0_memory_usage_mb = 0.0f;
+  metrics->gpu1_memory_usage_mb = 0.0f;
+  metrics->active_gpu_task_manager_index = GPU_PREFERENCES_INVALID_TASK_MANAGER_INDEX;
+  metrics->gpu0_name[0] = '\0';
+  metrics->gpu1_name[0] = '\0';
+
+  metrics->system_memory_percent = app->system_usage.system_memory_percent;
+  metrics->system_memory_used_mb = app->system_usage.system_memory_used_mb;
+  metrics->system_memory_total_mb = app->system_usage.system_memory_total_mb;
+  metrics->thermal_zone_temperature_c = app->system_usage.thermal_zone_temperature_c;
+  metrics->gpu_temperature_c = app->system_usage.gpu_temperature_c;
+  metrics->thermal_zone_temperature_available = app->system_usage.thermal_zone_temperature_available;
+  metrics->gpu_temperature_available = app->system_usage.gpu_temperature_available;
+  app_copy_utf8(metrics->thermal_zone_label, sizeof(metrics->thermal_zone_label), app->system_usage.thermal_zone_name);
+
+  gpu0_adapter = gpu_preferences_find_adapter_by_task_manager_index(gpu_info, 0);
+  gpu1_adapter = gpu_preferences_find_adapter_by_task_manager_index(gpu_info, 1);
+  if (gpu0_adapter != NULL)
+  {
+    gpu0_sample = app_find_system_gpu_adapter_sample(&app->system_usage, gpu0_adapter->luid_low_part, gpu0_adapter->luid_high_part);
+    app_copy_utf8(metrics->gpu0_name, sizeof(metrics->gpu0_name), gpu0_adapter->name);
+    if (gpu0_sample != NULL)
+    {
+      metrics->gpu0_usage_percent = gpu0_sample->usage_percent;
+      metrics->gpu0_memory_usage_mb = gpu0_sample->memory_usage_mb;
+    }
+  }
+  if (gpu1_adapter != NULL)
+  {
+    gpu1_sample = app_find_system_gpu_adapter_sample(&app->system_usage, gpu1_adapter->luid_low_part, gpu1_adapter->luid_high_part);
+    app_copy_utf8(metrics->gpu1_name, sizeof(metrics->gpu1_name), gpu1_adapter->name);
+    if (gpu1_sample != NULL)
+    {
+      metrics->gpu1_usage_percent = gpu1_sample->usage_percent;
+      metrics->gpu1_memory_usage_mb = gpu1_sample->memory_usage_mb;
+    }
+  }
+
+  active_gpu_name =
+    (gpu_info->current_renderer[0] != '\0')
+      ? gpu_info->current_renderer
+      : ((gpu_info->adapter_count > 0) ? gpu_info->adapters[0].name : gpu_info->current_vendor);
+  app_copy_utf8(metrics->active_gpu_name, sizeof(metrics->active_gpu_name), active_gpu_name);
+
+  for (adapter_index = 0; adapter_index < gpu_info->adapter_count; ++adapter_index)
+  {
+    const GpuAdapterInfo* adapter = &gpu_info->adapters[adapter_index];
+    if (adapter->name[0] == '\0' || adapter->task_manager_index < 0)
+    {
+      continue;
+    }
+
+    if (strstr(active_gpu_name, adapter->name) != NULL || strstr(adapter->name, active_gpu_name) != NULL)
+    {
+      active_gpu_task_manager_index = adapter->task_manager_index;
+      break;
+    }
+  }
+
+  if (active_gpu_task_manager_index < 0)
+  {
+    if (gpu1_adapter != NULL &&
+      (strstr(active_gpu_name, "NVIDIA") != NULL || strstr(active_gpu_name, "Radeon") != NULL || strstr(active_gpu_name, "GeForce") != NULL))
+    {
+      active_gpu_task_manager_index = gpu1_adapter->task_manager_index;
+    }
+    else if (gpu0_adapter != NULL)
+    {
+      active_gpu_task_manager_index = gpu0_adapter->task_manager_index;
+    }
+  }
+
+  metrics->active_gpu_task_manager_index = active_gpu_task_manager_index;
+
+  metrics->health_status = app_evaluate_health_status(metrics, &app->system_usage, health_summary, sizeof(health_summary));
+  app_copy_utf8(metrics->health_summary, sizeof(metrics->health_summary), health_summary);
+}
+
+static void app_log_hardware_profile(const AppState* app)
+{
+  const GpuPreferenceInfo* gpu_info = NULL;
+  int adapter_index = 0;
+  char gpu_temp_text[64] = { 0 };
+  char zone_temp_text[96] = { 0 };
+
+  if (app == NULL)
+  {
+    return;
+  }
+
+  gpu_info = &app->platform.overlay.gpu_info;
+  if (app->system_usage.gpu_temperature_available != 0)
+  {
+    (void)snprintf(gpu_temp_text, sizeof(gpu_temp_text), "%.1fC", app->system_usage.gpu_temperature_c);
+  }
+  else
+  {
+    (void)snprintf(gpu_temp_text, sizeof(gpu_temp_text), "unavailable");
+  }
+  if (app->system_usage.thermal_zone_temperature_available != 0)
+  {
+    (void)snprintf(
+      zone_temp_text,
+      sizeof(zone_temp_text),
+      "%.1fC (%s)",
+      app->system_usage.thermal_zone_temperature_c,
+      app->system_usage.thermal_zone_name);
+  }
+  else
+  {
+    (void)snprintf(zone_temp_text, sizeof(zone_temp_text), "unavailable");
+  }
+
+  diagnostics_logf(
+    "hardware_profile: build=%s renderer=%s vendor=%s gpu_route=%s ram_total=%.0fMB gpu_temp=%s zone_temp=%s",
+#if defined(NDEBUG)
+    "Release",
+#else
+    "Debug",
+#endif
+    gpu_info->current_renderer[0] != '\0' ? gpu_info->current_renderer : "OpenGL",
+    gpu_info->current_vendor[0] != '\0' ? gpu_info->current_vendor : "unknown",
+    gpu_preferences_get_mode_label(gpu_info->selected_mode),
+    app->system_usage.system_memory_total_mb,
+    gpu_temp_text,
+    zone_temp_text);
+
+  for (adapter_index = 0; adapter_index < gpu_info->adapter_count; ++adapter_index)
+  {
+    const GpuAdapterInfo* adapter = &gpu_info->adapters[adapter_index];
+    diagnostics_logf(
+      "hardware_profile: adapter[%d]=%s vram=%uMB eco=%d high=%d",
+      adapter_index,
+      adapter->name,
+      adapter->dedicated_video_memory_mb,
+      adapter->is_minimum_power_candidate,
+      adapter->is_high_performance_candidate);
+    if (adapter->task_manager_index >= 0)
+    {
+      diagnostics_logf(
+        "hardware_profile: taskmgr_gpu%d=%s luid=0x%08x_0x%08x",
+        adapter->task_manager_index,
+        adapter->name,
+        (unsigned int)adapter->luid_high_part,
+        adapter->luid_low_part);
+    }
+  }
+}
+
+static void app_log_runtime_telemetry(AppState* app)
+{
+  const OverlayMetrics* metrics = NULL;
+  char gpu_temp_text[64] = { 0 };
+  char zone_temp_text[96] = { 0 };
+  char active_gpu_text[192] = { 0 };
+
+  if (app == NULL)
+  {
+    return;
+  }
+
+  metrics = &app->stats_display_metrics;
+  if (metrics->gpu_temperature_available != 0)
+  {
+    (void)snprintf(gpu_temp_text, sizeof(gpu_temp_text), "%.1fC", metrics->gpu_temperature_c);
+  }
+  else
+  {
+    (void)snprintf(gpu_temp_text, sizeof(gpu_temp_text), "unavailable");
+  }
+
+  if (metrics->thermal_zone_temperature_available != 0)
+  {
+    (void)snprintf(
+      zone_temp_text,
+      sizeof(zone_temp_text),
+      "%.1fC (%s)",
+      metrics->thermal_zone_temperature_c,
+      metrics->thermal_zone_label[0] != '\0' ? metrics->thermal_zone_label : "thermal-zone");
+  }
+  else
+  {
+    (void)snprintf(zone_temp_text, sizeof(zone_temp_text), "unavailable");
+  }
+
+  if (metrics->active_gpu_task_manager_index >= 0)
+  {
+    (void)snprintf(
+      active_gpu_text,
+      sizeof(active_gpu_text),
+      "GPU %d (%s)",
+      metrics->active_gpu_task_manager_index,
+      metrics->active_gpu_name[0] != '\0' ? metrics->active_gpu_name : "OpenGL");
+  }
+  else
+  {
+    (void)snprintf(
+      active_gpu_text,
+      sizeof(active_gpu_text),
+      "%s",
+      metrics->active_gpu_name[0] != '\0' ? metrics->active_gpu_name : "OpenGL");
+  }
+
+  diagnostics_logf(
+    "telemetry: health=%s reason=%s fps=%.0f frame=%.2fms cpu=%.0f%% gpu0=\"%s\" %.0f%% gpu1=\"%s\" %.0f%% ram=%.0f%% (%.0f/%.0fMB) vram=%.0f/%.0fMB active_gpu=%s gpu_temp=%s zone_temp=%s pos=(%.1f,%.1f,%.1f)",
+    app_get_health_status_label(metrics->health_status),
+    metrics->health_summary[0] != '\0' ? metrics->health_summary : "n/a",
+    metrics->frames_per_second,
+    metrics->frame_time_ms,
+    metrics->cpu_usage_percent,
+    metrics->gpu0_name[0] != '\0' ? metrics->gpu0_name : "GPU 0",
+    metrics->gpu0_usage_percent,
+    metrics->gpu1_name[0] != '\0' ? metrics->gpu1_name : "GPU 1",
+    metrics->gpu1_usage_percent,
+    metrics->system_memory_percent,
+    metrics->system_memory_used_mb,
+    metrics->system_memory_total_mb,
+    metrics->gpu0_memory_usage_mb,
+    metrics->gpu1_memory_usage_mb,
+    active_gpu_text,
+    gpu_temp_text,
+    zone_temp_text,
+    metrics->player_position_x,
+    metrics->player_position_y,
+    metrics->player_position_z);
 }
 
 static float app_wrap_unit_interval(float value)
