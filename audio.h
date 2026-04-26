@@ -21,7 +21,7 @@ typedef struct AudioState
   int target_volume;
   int fade_active;
   unsigned long long fade_start_ms;
-#if defined(__APPLE__)
+#if defined(_WIN32) || defined(__APPLE__)
   void* native_player;
 #endif
 } AudioState;

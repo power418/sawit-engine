@@ -25,6 +25,7 @@ GLEW_READY := $(BUILD_DIR)/glew.ready
 
 PROJECT_SOURCES := \
   app.c \
+  audio.c \
   block_render.c \
   block_world.c \
   console_overlay.c \
@@ -49,6 +50,7 @@ PROJECT_SOURCES := \
 
 PROJECT_OBJECTS := \
   $(OBJ_DIR)/app.obj \
+  $(OBJ_DIR)/audio.obj \
   $(OBJ_DIR)/block_render.obj \
   $(OBJ_DIR)/block_world.obj \
   $(OBJ_DIR)/console_overlay.obj \
@@ -90,7 +92,7 @@ COMMON_CFLAGS := -std=c11 $(WARNINGS)
 GLEW_CFLAGS := -fno-builtin -fno-stack-protector
 DEPFLAGS := -MMD -MP
 LDFLAGS := -mwindows
-LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lole32 -loleaut32 -lpdh -luser32 -ladvapi32 -lwbemuuid
+LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lmfplat -lmfreadwrite -lmfuuid -lole32 -loleaut32 -lpdh -luser32 -ladvapi32 -lwbemuuid -lwinmm
 
 ifeq ($(CONFIG),Debug)
 CONFIG_CFLAGS := -O0 -g

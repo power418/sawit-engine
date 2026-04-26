@@ -13,6 +13,7 @@ int app_run(void)
   GraphicsBackend graphics_backend = GRAPHICS_BACKEND_OPENGL;
   char graphics_error_message[256] = { 0 };
   int music_started = 0;
+  float next_music_attempt_time_seconds = 0.0f;
 
   audio_init(&music_audio);
 
@@ -280,10 +281,16 @@ int app_run(void)
       &app.platform.overlay,
       &app.block_world);
     platform_swap_buffers(&app.platform);
-    if (music_started == 0)
+    if (music_started == 0 && current_time_seconds >= next_music_attempt_time_seconds)
     {
-      (void)audio_start_music(&music_audio);
-      music_started = 1;
+      if (audio_start_music(&music_audio))
+      {
+        music_started = 1;
+      }
+      else
+      {
+        next_music_attempt_time_seconds = current_time_seconds + 2.5f;
+      }
     }
   }
 

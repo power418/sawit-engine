@@ -152,7 +152,9 @@ int renderer_create(Renderer* renderer, int width, int height)
   renderer->palm_camera_position_location = glGetUniformLocation(renderer->palm_program, "camera_position");
   renderer->palm_shadow_map_location = glGetUniformLocation(renderer->palm_program, "shadow_map");
   renderer->palm_diffuse_map_location = glGetUniformLocation(renderer->palm_program, "diffuse_map");
+  renderer->palm_terrain_shape_location = glGetUniformLocation(renderer->palm_program, "terrain_shape");
   renderer->palm_environment_location = glGetUniformLocation(renderer->palm_program, "environment_settings");
+  renderer->palm_lighting_quality_location = glGetUniformLocation(renderer->palm_program, "lighting_quality");
   renderer->palm_shadow_light_view_projection_location = glGetUniformLocation(renderer->palm_shadow_program, "light_vp");
   renderer->shadow_light_view_projection_location = glGetUniformLocation(renderer->shadow_program, "light_vp");
   renderer->shadow_origin_location = glGetUniformLocation(renderer->shadow_program, "terrain_origin");
@@ -610,9 +612,23 @@ void renderer_render(
   {
     glUniform3fv(renderer->palm_camera_position_location, 1, camera_position);
   }
+  if (renderer->palm_terrain_shape_location >= 0)
+  {
+    glUniform4fv(renderer->palm_terrain_shape_location, 1, terrain_shape);
+  }
   if (renderer->palm_environment_location >= 0)
   {
     glUniform4fv(renderer->palm_environment_location, 1, environment_settings);
+  }
+  if (renderer->palm_lighting_quality_location >= 0)
+  {
+    const GLfloat lighting_quality[4] = {
+      renderer->quality.enable_raytrace ? 1.0f : 0.0f,
+      renderer->quality.enable_pathtrace ? 1.0f : 0.0f,
+      renderer->quality.trace_distance_scale,
+      0.0f
+    };
+    glUniform4fv(renderer->palm_lighting_quality_location, 1, lighting_quality);
   }
   glDisable(GL_CULL_FACE);
   mountain_render_draw(&renderer->mountain_mesh);

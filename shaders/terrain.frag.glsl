@@ -63,11 +63,17 @@ void main()
     pathtrace_indirect = pathtrace_indirect_bounce(world_pos, normal, albedo, light_dir, sun_color, daylight) * tracer_weight * pathtrace_factor;
   }
 
+  float contact_visibility = smoothstep(0.05, 1.0, combined_visibility);
+  ambient *= mix(0.66, 1.0, contact_visibility);
+  rim *= mix(0.78, 1.0, contact_visibility);
+  pathtrace_indirect *= mix(0.80, 1.0, contact_visibility);
+
   lumen_proxy =
     lighting_lumen_skylight(normal, daylight, pathtrace_ao) +
     lighting_lumen_ground_bounce(albedo, normal, sun_color, daylight) +
     lighting_lumen_sun_bounce(normal, light_dir, sun_color, daylight, combined_visibility);
   lumen_proxy *= mix(1.0, 0.58, tracer_weight * pathtrace_factor);
+  lumen_proxy *= mix(0.72, 1.0, contact_visibility);
 
   vec3 lit = albedo * (ambient + rim + pathtrace_indirect + lumen_proxy + sun_color * direct * combined_visibility * (0.10 + daylight * 0.36) * sun_energy);
 

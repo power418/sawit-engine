@@ -13,6 +13,14 @@ static int render_quality_is_ultra_low_end_intel(const char* renderer_name, cons
 RendererQualityPreset render_quality_pick_preset(const char* renderer_name, const char* vendor_name)
 {
   const unsigned int dedicated_memory_mb = render_quality_query_dedicated_memory_mb(renderer_name, vendor_name);
+  const int performance_discrete_renderer =
+    render_quality_contains_case_insensitive(renderer_name, "nvidia") ||
+    render_quality_contains_case_insensitive(renderer_name, "geforce") ||
+    render_quality_contains_case_insensitive(renderer_name, "rtx") ||
+    render_quality_contains_case_insensitive(renderer_name, "gtx") ||
+    render_quality_contains_case_insensitive(renderer_name, "radeon") ||
+    render_quality_contains_case_insensitive(renderer_name, "rx ") ||
+    render_quality_contains_case_insensitive(renderer_name, "arc");
 
   if (render_quality_is_ultra_low_end_intel(renderer_name, vendor_name))
   {
@@ -25,7 +33,11 @@ RendererQualityPreset render_quality_pick_preset(const char* renderer_name, cons
   {
     return RENDER_QUALITY_PRESET_LOW;
   }
-  if (dedicated_memory_mb > 0U && dedicated_memory_mb <= 4096U)
+  if (dedicated_memory_mb > 0U && dedicated_memory_mb <= 2048U)
+  {
+    return RENDER_QUALITY_PRESET_LOW;
+  }
+  if (dedicated_memory_mb > 0U && dedicated_memory_mb <= 4096U && performance_discrete_renderer == 0)
   {
     return RENDER_QUALITY_PRESET_LOW;
   }

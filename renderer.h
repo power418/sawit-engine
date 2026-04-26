@@ -63,7 +63,9 @@ typedef struct Renderer
   GLint palm_camera_position_location;
   GLint palm_shadow_map_location;
   GLint palm_diffuse_map_location;
+  GLint palm_terrain_shape_location;
   GLint palm_environment_location;
+  GLint palm_lighting_quality_location;
   GLint palm_shadow_light_view_projection_location;
   GLint shadow_light_view_projection_location;
   GLint shadow_origin_location;

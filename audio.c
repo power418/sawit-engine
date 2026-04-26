@@ -3,6 +3,7 @@
 #include "diagnostics.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,9 @@
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
 #include <mmsystem.h>
 #elif defined(__APPLE__)
 #include "audio_macos.h"
@@ -54,8 +58,28 @@ static void audio_update_fade(AudioState* state);
 static int audio_clamp_int(int value, int min_value, int max_value);
 
 #if defined(_WIN32)
-static const char* k_audio_alias = "sawit_game_music";
+typedef struct AudioWavePlayer
+{
+  HWAVEOUT device;
+  WAVEHDR header;
+  unsigned char* pcm_data;
+  DWORD pcm_size;
+  int header_prepared;
+} AudioWavePlayer;
 
+static const char* k_audio_alias = "sawit_game_music";
+static int g_audio_mf_started = 0;
+static int g_audio_com_initialized = 0;
+
+static int audio_wave_open_and_play(AudioState* state, const char* path);
+static void audio_wave_stop(AudioState* state);
+static int audio_wave_is_playing(const AudioState* state);
+static int audio_wave_set_volume(AudioState* state, int volume);
+static int audio_wave_decode_file(const char* path, WAVEFORMATEX** out_format, UINT32* out_format_size, unsigned char** out_pcm_data, DWORD* out_pcm_size);
+static int audio_wave_append_pcm(unsigned char** data, DWORD* size, DWORD* capacity, const BYTE* source, DWORD source_size);
+static int audio_windows_media_foundation_startup(void);
+static void audio_windows_media_foundation_shutdown(void);
+static int audio_windows_path_to_wide(const char* path, wchar_t* out_path, size_t out_path_count);
 static void audio_normalize_path_separators(char* path);
 static int audio_send_command(const char* command, int log_failure);
 static int audio_send_command_for_string(const char* command, char* out_text, size_t out_text_size, int log_failure);
@@ -128,8 +152,19 @@ void audio_update(AudioState* state)
 
   audio_update_fade(state);
 
-  if (state->track_count <= 1U)
+  if (state->native_player != NULL)
   {
+    if (audio_wave_is_playing(state))
+    {
+      return;
+    }
+
+    if (state->track_count > 0U)
+    {
+      const size_t next_track_index =
+        (state->track_count > 1U) ? ((state->current_track_index + 1U) % state->track_count) : state->current_track_index;
+      (void)audio_play_track_from(state, next_track_index);
+    }
     return;
   }
 
@@ -147,7 +182,8 @@ void audio_update(AudioState* state)
 
   if (state->track_count > 0U)
   {
-    const size_t next_track_index = (state->current_track_index + 1U) % state->track_count;
+    const size_t next_track_index =
+      (state->track_count > 1U) ? ((state->current_track_index + 1U) % state->track_count) : state->current_track_index;
     (void)audio_play_track_from(state, next_track_index);
   }
 #elif defined(__APPLE__)
@@ -158,14 +194,15 @@ void audio_update(AudioState* state)
 
   audio_update_fade(state);
 
-  if (state->track_count <= 1U || audio_macos_is_playing(state))
+  if (audio_macos_is_playing(state))
   {
     return;
   }
 
   if (state->track_count > 0U)
   {
-    const size_t next_track_index = (state->current_track_index + 1U) % state->track_count;
+    const size_t next_track_index =
+      (state->track_count > 1U) ? ((state->current_track_index + 1U) % state->track_count) : state->current_track_index;
     (void)audio_play_track_from(state, next_track_index);
   }
 #else
@@ -181,16 +218,23 @@ void audio_stop(AudioState* state)
   }
 
 #if defined(_WIN32)
+  if (state->native_player != NULL)
+  {
+    audio_wave_stop(state);
+  }
   if (state->is_open != 0)
   {
     char command[AUDIO_COMMAND_LENGTH] = { 0 };
 
     (void)snprintf(command, sizeof(command), "stop %s", k_audio_alias);
     (void)audio_send_command(command, 0);
+  }
+  {
+    char command[AUDIO_COMMAND_LENGTH] = { 0 };
     (void)snprintf(command, sizeof(command), "close %s", k_audio_alias);
     (void)audio_send_command(command, 0);
-    state->is_open = 0;
   }
+  state->is_open = 0;
 #elif defined(__APPLE__)
   if (state->native_player != NULL)
   {
@@ -210,6 +254,9 @@ void audio_shutdown(AudioState* state)
 {
   audio_stop(state);
   audio_clear_tracks(state);
+#if defined(_WIN32)
+  audio_windows_media_foundation_shutdown();
+#endif
 }
 
 static int audio_directory_exists(const char* path)
@@ -702,6 +749,437 @@ static char audio_to_lower_ascii(char value)
 
 #if defined(_WIN32)
 
+static int audio_wave_open_and_play(AudioState* state, const char* path)
+{
+  AudioWavePlayer* player = NULL;
+  WAVEFORMATEX* wave_format = NULL;
+  UINT32 wave_format_size = 0U;
+  unsigned char* pcm_data = NULL;
+  DWORD pcm_size = 0U;
+  MMRESULT result = MMSYSERR_NOERROR;
+
+  if (state == NULL || path == NULL || path[0] == '\0')
+  {
+    return 0;
+  }
+
+  if (!audio_wave_decode_file(path, &wave_format, &wave_format_size, &pcm_data, &pcm_size))
+  {
+    return 0;
+  }
+
+  player = (AudioWavePlayer*)calloc(1U, sizeof(*player));
+  if (player == NULL)
+  {
+    CoTaskMemFree(wave_format);
+    free(pcm_data);
+    diagnostics_log("audio: failed to allocate waveOut player");
+    return 0;
+  }
+
+  player->pcm_data = pcm_data;
+  player->pcm_size = pcm_size;
+  result = waveOutOpen(&player->device, WAVE_MAPPER, wave_format, 0U, 0U, CALLBACK_NULL);
+  CoTaskMemFree(wave_format);
+  if (result != MMSYSERR_NOERROR)
+  {
+    free(player->pcm_data);
+    free(player);
+    diagnostics_logf("audio: waveOutOpen failed with code %u", (unsigned)result);
+    return 0;
+  }
+
+  player->header.lpData = (LPSTR)player->pcm_data;
+  player->header.dwBufferLength = player->pcm_size;
+  result = waveOutPrepareHeader(player->device, &player->header, sizeof(player->header));
+  if (result != MMSYSERR_NOERROR)
+  {
+    waveOutClose(player->device);
+    free(player->pcm_data);
+    free(player);
+    diagnostics_logf("audio: waveOutPrepareHeader failed with code %u", (unsigned)result);
+    return 0;
+  }
+
+  player->header_prepared = 1;
+  result = waveOutWrite(player->device, &player->header, sizeof(player->header));
+  if (result != MMSYSERR_NOERROR)
+  {
+    waveOutUnprepareHeader(player->device, &player->header, sizeof(player->header));
+    waveOutClose(player->device);
+    free(player->pcm_data);
+    free(player);
+    diagnostics_logf("audio: waveOutWrite failed with code %u", (unsigned)result);
+    return 0;
+  }
+
+  state->native_player = player;
+  state->is_open = 1;
+  state->target_volume = AUDIO_DEFAULT_TARGET_VOLUME;
+  (void)snprintf(state->active_path, sizeof(state->active_path), "%s", path);
+  audio_begin_fade_in(state);
+  diagnostics_logf("audio: waveOut playback started for '%s' (%u bytes PCM)", audio_get_basename(path), (unsigned)pcm_size);
+  (void)wave_format_size;
+  return 1;
+}
+
+static void audio_wave_stop(AudioState* state)
+{
+  AudioWavePlayer* player = NULL;
+
+  if (state == NULL || state->native_player == NULL)
+  {
+    return;
+  }
+
+  player = (AudioWavePlayer*)state->native_player;
+  if (player->device != NULL)
+  {
+    (void)waveOutReset(player->device);
+    if (player->header_prepared != 0)
+    {
+      (void)waveOutUnprepareHeader(player->device, &player->header, sizeof(player->header));
+    }
+    (void)waveOutClose(player->device);
+  }
+
+  free(player->pcm_data);
+  free(player);
+  state->native_player = NULL;
+  state->is_open = 0;
+}
+
+static int audio_wave_is_playing(const AudioState* state)
+{
+  const AudioWavePlayer* player = NULL;
+
+  if (state == NULL || state->native_player == NULL)
+  {
+    return 0;
+  }
+
+  player = (const AudioWavePlayer*)state->native_player;
+  return (player->header.dwFlags & WHDR_DONE) == 0U;
+}
+
+static int audio_wave_set_volume(AudioState* state, int volume)
+{
+  AudioWavePlayer* player = NULL;
+  const DWORD channel_volume = (DWORD)((audio_clamp_int(volume, AUDIO_VOLUME_MIN, AUDIO_VOLUME_MAX) * 0xFFFF) / AUDIO_VOLUME_MAX);
+  const DWORD packed_volume = channel_volume | (channel_volume << 16);
+
+  if (state == NULL || state->native_player == NULL)
+  {
+    return 0;
+  }
+
+  player = (AudioWavePlayer*)state->native_player;
+  return waveOutSetVolume(player->device, packed_volume) == MMSYSERR_NOERROR;
+}
+
+static int audio_wave_decode_file(const char* path, WAVEFORMATEX** out_format, UINT32* out_format_size, unsigned char** out_pcm_data, DWORD* out_pcm_size)
+{
+  wchar_t wide_path[PLATFORM_PATH_MAX] = { 0 };
+  IMFSourceReader* reader = NULL;
+  IMFMediaType* target_type = NULL;
+  IMFMediaType* current_type = NULL;
+  WAVEFORMATEX* wave_format = NULL;
+  UINT32 wave_format_size = 0U;
+  unsigned char* pcm_data = NULL;
+  DWORD pcm_size = 0U;
+  DWORD pcm_capacity = 0U;
+  HRESULT hr = S_OK;
+  int ok = 0;
+
+  if (out_format == NULL || out_format_size == NULL || out_pcm_data == NULL || out_pcm_size == NULL)
+  {
+    return 0;
+  }
+
+  *out_format = NULL;
+  *out_format_size = 0U;
+  *out_pcm_data = NULL;
+  *out_pcm_size = 0U;
+
+  if (!audio_windows_path_to_wide(path, wide_path, sizeof(wide_path) / sizeof(wide_path[0])) ||
+    !audio_windows_media_foundation_startup())
+  {
+    return 0;
+  }
+
+  hr = MFCreateSourceReaderFromURL(wide_path, NULL, &reader);
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: Media Foundation could not open '%s' (hr=0x%08x)", audio_get_basename(path), (unsigned)hr);
+    goto cleanup;
+  }
+
+  hr = MFCreateMediaType(&target_type);
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: MFCreateMediaType failed (hr=0x%08x)", (unsigned)hr);
+    goto cleanup;
+  }
+
+  hr = target_type->lpVtbl->SetGUID(target_type, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+  if (SUCCEEDED(hr))
+  {
+    hr = target_type->lpVtbl->SetGUID(target_type, &MF_MT_SUBTYPE, &MFAudioFormat_PCM);
+  }
+  if (SUCCEEDED(hr))
+  {
+    hr = target_type->lpVtbl->SetUINT32(target_type, &MF_MT_AUDIO_BITS_PER_SAMPLE, 16U);
+  }
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: failed to configure PCM output type (hr=0x%08x)", (unsigned)hr);
+    goto cleanup;
+  }
+
+  hr = reader->lpVtbl->SetCurrentMediaType(reader, MF_SOURCE_READER_FIRST_AUDIO_STREAM, NULL, target_type);
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: source reader cannot decode '%s' to PCM (hr=0x%08x)", audio_get_basename(path), (unsigned)hr);
+    goto cleanup;
+  }
+
+  hr = reader->lpVtbl->GetCurrentMediaType(reader, MF_SOURCE_READER_FIRST_AUDIO_STREAM, &current_type);
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: failed to query decoded audio type (hr=0x%08x)", (unsigned)hr);
+    goto cleanup;
+  }
+
+  hr = MFCreateWaveFormatExFromMFMediaType(current_type, &wave_format, &wave_format_size, MFWaveFormatExConvertFlag_Normal);
+  if (FAILED(hr) || wave_format == NULL || wave_format_size < sizeof(WAVEFORMATEX))
+  {
+    diagnostics_logf("audio: failed to build wave format (hr=0x%08x)", (unsigned)hr);
+    goto cleanup;
+  }
+
+  for (;;)
+  {
+    DWORD stream_index = 0U;
+    DWORD flags = 0U;
+    LONGLONG timestamp = 0;
+    IMFSample* sample = NULL;
+
+    hr = reader->lpVtbl->ReadSample(
+      reader,
+      MF_SOURCE_READER_FIRST_AUDIO_STREAM,
+      0U,
+      &stream_index,
+      &flags,
+      &timestamp,
+      &sample);
+    (void)stream_index;
+    (void)timestamp;
+
+    if (FAILED(hr))
+    {
+      diagnostics_logf("audio: failed while decoding '%s' (hr=0x%08x)", audio_get_basename(path), (unsigned)hr);
+      if (sample != NULL)
+      {
+        sample->lpVtbl->Release(sample);
+      }
+      goto cleanup;
+    }
+
+    if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0U)
+    {
+      if (sample != NULL)
+      {
+        sample->lpVtbl->Release(sample);
+      }
+      break;
+    }
+
+    if (sample != NULL)
+    {
+      IMFMediaBuffer* buffer = NULL;
+      BYTE* sample_data = NULL;
+      DWORD max_length = 0U;
+      DWORD current_length = 0U;
+
+      hr = sample->lpVtbl->ConvertToContiguousBuffer(sample, &buffer);
+      if (SUCCEEDED(hr))
+      {
+        hr = buffer->lpVtbl->Lock(buffer, &sample_data, &max_length, &current_length);
+      }
+      if (SUCCEEDED(hr))
+      {
+        if (!audio_wave_append_pcm(&pcm_data, &pcm_size, &pcm_capacity, sample_data, current_length))
+        {
+          hr = E_OUTOFMEMORY;
+        }
+        (void)buffer->lpVtbl->Unlock(buffer);
+      }
+      if (buffer != NULL)
+      {
+        buffer->lpVtbl->Release(buffer);
+      }
+      sample->lpVtbl->Release(sample);
+
+      if (FAILED(hr))
+      {
+        diagnostics_logf("audio: failed to copy decoded PCM for '%s' (hr=0x%08x)", audio_get_basename(path), (unsigned)hr);
+        goto cleanup;
+      }
+    }
+  }
+
+  if (pcm_size == 0U)
+  {
+    diagnostics_logf("audio: decoded '%s' produced no PCM samples", audio_get_basename(path));
+    goto cleanup;
+  }
+
+  *out_format = wave_format;
+  *out_format_size = wave_format_size;
+  *out_pcm_data = pcm_data;
+  *out_pcm_size = pcm_size;
+  wave_format = NULL;
+  pcm_data = NULL;
+  ok = 1;
+
+cleanup:
+  if (current_type != NULL)
+  {
+    current_type->lpVtbl->Release(current_type);
+  }
+  if (target_type != NULL)
+  {
+    target_type->lpVtbl->Release(target_type);
+  }
+  if (reader != NULL)
+  {
+    reader->lpVtbl->Release(reader);
+  }
+  if (wave_format != NULL)
+  {
+    CoTaskMemFree(wave_format);
+  }
+  free(pcm_data);
+  return ok;
+}
+
+static int audio_wave_append_pcm(unsigned char** data, DWORD* size, DWORD* capacity, const BYTE* source, DWORD source_size)
+{
+  DWORD required_size = 0U;
+
+  if (data == NULL || size == NULL || capacity == NULL || source == NULL)
+  {
+    return 0;
+  }
+  if (source_size == 0U)
+  {
+    return 1;
+  }
+  if (*size > 0xFFFFFFFFUL - source_size)
+  {
+    return 0;
+  }
+
+  required_size = *size + source_size;
+  if (required_size > *capacity)
+  {
+    DWORD new_capacity = (*capacity > 0U) ? *capacity : 65536U;
+    unsigned char* resized = NULL;
+
+    while (new_capacity < required_size)
+    {
+      if (new_capacity > 0x7FFFFFFFUL)
+      {
+        new_capacity = required_size;
+        break;
+      }
+      new_capacity *= 2U;
+    }
+
+    resized = (unsigned char*)realloc(*data, (size_t)new_capacity);
+    if (resized == NULL)
+    {
+      return 0;
+    }
+
+    *data = resized;
+    *capacity = new_capacity;
+  }
+
+  memcpy(*data + *size, source, source_size);
+  *size = required_size;
+  return 1;
+}
+
+static int audio_windows_media_foundation_startup(void)
+{
+  HRESULT hr = S_OK;
+
+  if (g_audio_mf_started != 0)
+  {
+    return 1;
+  }
+
+  hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+  if (SUCCEEDED(hr))
+  {
+    g_audio_com_initialized = 1;
+  }
+  else if (hr != RPC_E_CHANGED_MODE)
+  {
+    diagnostics_logf("audio: CoInitializeEx failed (hr=0x%08x)", (unsigned)hr);
+    return 0;
+  }
+
+  hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
+  if (FAILED(hr))
+  {
+    diagnostics_logf("audio: MFStartup failed (hr=0x%08x)", (unsigned)hr);
+    if (g_audio_com_initialized != 0)
+    {
+      CoUninitialize();
+      g_audio_com_initialized = 0;
+    }
+    return 0;
+  }
+
+  g_audio_mf_started = 1;
+  return 1;
+}
+
+static void audio_windows_media_foundation_shutdown(void)
+{
+  if (g_audio_mf_started != 0)
+  {
+    (void)MFShutdown();
+    g_audio_mf_started = 0;
+  }
+  if (g_audio_com_initialized != 0)
+  {
+    CoUninitialize();
+    g_audio_com_initialized = 0;
+  }
+}
+
+static int audio_windows_path_to_wide(const char* path, wchar_t* out_path, size_t out_path_count)
+{
+  int converted = 0;
+
+  if (path == NULL || out_path == NULL || out_path_count == 0U || out_path_count > (size_t)INT_MAX)
+  {
+    return 0;
+  }
+
+  out_path[0] = L'\0';
+  converted = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, out_path, (int)out_path_count);
+  if (converted <= 0)
+  {
+    converted = MultiByteToWideChar(CP_ACP, 0U, path, -1, out_path, (int)out_path_count);
+  }
+
+  return converted > 0;
+}
+
 static void audio_normalize_path_separators(char* path)
 {
   size_t index = 0U;
@@ -825,6 +1303,12 @@ static int audio_open_and_play(AudioState* player, const char* path)
     const char* extension = NULL;
 
     audio_stop(player);
+    if (audio_wave_open_and_play(player, path))
+    {
+      return 1;
+    }
+
+    diagnostics_logf("audio: Media Foundation playback failed for '%s', trying MCI fallback", audio_get_basename(path));
     (void)snprintf(normalized_path, sizeof(normalized_path), "%s", path);
     audio_normalize_path_separators(normalized_path);
     extension = strrchr(normalized_path, '.');
@@ -859,23 +1343,17 @@ static int audio_open_and_play(AudioState* player, const char* path)
       }
     }
 
-    if (player->track_count <= 1U)
-    {
-      (void)snprintf(command, sizeof(command), "play %s from 0 repeat", k_audio_alias);
-    }
-    else
-    {
-      (void)snprintf(command, sizeof(command), "play %s from 0", k_audio_alias);
-    }
+    player->is_open = 1;
+    (void)snprintf(player->active_path, sizeof(player->active_path), "%s", normalized_path);
+
+    (void)snprintf(command, sizeof(command), "play %s from 0", k_audio_alias);
     if (!audio_send_command(command, 1))
     {
       audio_stop(player);
       return 0;
     }
 
-    player->is_open = 1;
     player->target_volume = AUDIO_DEFAULT_TARGET_VOLUME;
-    (void)snprintf(player->active_path, sizeof(player->active_path), "%s", normalized_path);
     audio_begin_fade_in(player);
     return 1;
   }
@@ -941,6 +1419,21 @@ static int audio_set_volume(AudioState* state, int volume, int log_failure)
   }
 
 #if defined(_WIN32)
+  if (state->native_player != NULL)
+  {
+    if (!audio_wave_set_volume(state, clamped_volume))
+    {
+      if (log_failure != 0)
+      {
+        diagnostics_logf("audio: failed to set waveOut volume to %d", clamped_volume);
+      }
+      return 0;
+    }
+
+    state->current_volume = clamped_volume;
+    return 1;
+  }
+
   {
     char command[AUDIO_COMMAND_LENGTH] = { 0 };
 

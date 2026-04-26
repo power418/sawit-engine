@@ -440,6 +440,9 @@ else()
         dxgi
         dxguid
         gdi32
+        mfplat
+        mfreadwrite
+        mfuuid
         ole32
         oleaut32
         pdh
