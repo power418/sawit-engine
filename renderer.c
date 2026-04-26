@@ -676,7 +676,7 @@ void renderer_render(
 
 float renderer_get_terrain_height(float x, float z, const SceneSettings* settings)
 {
-  return terrain_get_height(x, z, settings);
+  return terrain_get_render_height(x, z, settings);
 }
 
 void renderer_sync_terrain_render_sampling(const Renderer* renderer, const CameraState* camera)

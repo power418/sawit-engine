@@ -52,8 +52,15 @@ RendererQualityProfile render_quality_pick(const char* renderer_name, const char
 
 RendererQualityProfile render_quality_get_profile(RendererQualityPreset preset, const char* renderer_name, const char* vendor_name)
 {
-  (void)renderer_name;
-  (void)vendor_name;
+  const unsigned int dedicated_memory_mb = render_quality_query_dedicated_memory_mb(renderer_name, vendor_name);
+  const int performance_discrete_renderer =
+    render_quality_contains_case_insensitive(renderer_name, "nvidia") ||
+    render_quality_contains_case_insensitive(renderer_name, "geforce") ||
+    render_quality_contains_case_insensitive(renderer_name, "rtx") ||
+    render_quality_contains_case_insensitive(renderer_name, "gtx") ||
+    render_quality_contains_case_insensitive(renderer_name, "radeon") ||
+    render_quality_contains_case_insensitive(renderer_name, "rx ") ||
+    render_quality_contains_case_insensitive(renderer_name, "arc");
 
   switch (preset)
   {
@@ -99,6 +106,28 @@ RendererQualityProfile render_quality_get_profile(RendererQualityPreset preset, 
 
     case RENDER_QUALITY_PRESET_HIGH:
     default:
+      if (performance_discrete_renderer != 0 && dedicated_memory_mb > 0U && dedicated_memory_mb <= 4096U)
+      {
+        return (RendererQualityProfile){
+          "High Performance",
+          RENDER_QUALITY_PRESET_HIGH,
+          0.78f,
+          0.46f,
+          190.0f,
+          1024,
+          257,
+          0,
+          1,
+          0,
+          0,
+          0,
+          3,
+          0,
+          0.72f,
+          0.42f
+        };
+      }
+
       return (RendererQualityProfile){
         "High",
         RENDER_QUALITY_PRESET_HIGH,
@@ -141,14 +170,14 @@ const char* render_quality_preset_get_description(RendererQualityPreset preset)
   switch (preset)
   {
     case RENDER_QUALITY_PRESET_HIGH:
-      return "Maksimum visual: full resolution, bayangan besar, dan efek terberat.";
+      return "Visual tinggi adaptif: raytraced shadow aktif, otomatis diringankan pada GPU 4GB.";
     case RENDER_QUALITY_PRESET_LOW:
       return "Balanced: cocok untuk Intel Iris Xe class iGPU, objek tetap jelas.";
     case RENDER_QUALITY_PRESET_ULTRA_LOW:
       return "Paling ringan: untuk iGPU lawas seperti Intel UHD 617.";
     case RENDER_QUALITY_PRESET_COUNT:
     default:
-      return "Maksimum visual: full resolution, bayangan besar, dan efek terberat.";
+      return "Visual tinggi adaptif: raytraced shadow aktif, otomatis diringankan pada GPU 4GB.";
   }
 }
 

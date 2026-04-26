@@ -51,7 +51,7 @@ void main()
 
   if (direct > 0.0 && raytrace_factor > 0.001)
   {
-    float raytraced_visibility = raytrace_direct_visibility(light_pos, world_pos, normal, light_dir, shadow_map);
+    float raytraced_visibility = raytrace_direct_visibility_from_shadow(shadow, world_pos, light_dir);
     shadow = mix(shadow, raytraced_visibility, tracer_weight * raytrace_factor);
   }
 

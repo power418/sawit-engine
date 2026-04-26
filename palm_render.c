@@ -4106,7 +4106,7 @@ static int palm_render_populate_palm_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 4U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_height(x, z, settings);
+        const float ground_y = terrain_get_render_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         PalmColor tint = {
@@ -4190,7 +4190,7 @@ static int palm_render_add_house_instance(PalmRenderMesh *mesh, int grid_x,
   const float slope = palm_render_estimate_slope(x, z, settings);
   PalmRenderVariant *variant = palm_render_pick_variant(
       mesh, PALM_RENDER_CATEGORY_HOUSE, grid_x, grid_z, 83U);
-  const float ground_y = terrain_get_height(x, z, settings);
+  const float ground_y = terrain_get_render_height(x, z, settings);
   const float size_bias = palm_render_mix(
       0.94f, 1.08f, palm_render_clamp(settings->palm_size, 0.0f, 1.0f));
   PalmColor tint = {palm_render_mix(0.92f, 1.04f, variation),
@@ -4451,7 +4451,7 @@ static int palm_render_populate_tree_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 45U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_height(x, z, settings);
+        const float ground_y = terrain_get_render_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         PalmColor tint = {
@@ -4617,7 +4617,7 @@ static int palm_render_populate_grass_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 26U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_height(x, z, settings);
+        const float ground_y = terrain_get_render_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         const float hole_threshold = palm_render_mix(0.05f, 0.24f, patch);
@@ -4739,7 +4739,7 @@ static int palm_render_populate_mountain_instances(
         angle_jitter;
     const float x = center_x + cosf(angle) * (ring_radius + radius_jitter);
     const float z = center_z + sinf(angle) * (ring_radius + radius_jitter);
-    const float ground_y = terrain_get_height(x, z, settings);
+    const float ground_y = terrain_get_render_height(x, z, settings);
     const float yaw =
         angle + palm_render_mix(-0.40f, 0.40f,
                                 palm_render_hash_unit(mountain_index, 0, 64U));
@@ -4862,7 +4862,7 @@ static void palm_render_get_terrain_origin_from_camera(
 static float
 palm_render_sample_lowest_terrain_ring(float x, float z, float radius,
                                        const SceneSettings *settings) {
-  float lowest_height = terrain_get_height(x, z, settings);
+  float lowest_height = terrain_get_render_height(x, z, settings);
   int sample_index = 0;
 
   if (settings == NULL || radius <= 0.01f) {
@@ -4875,7 +4875,7 @@ palm_render_sample_lowest_terrain_ring(float x, float z, float radius,
     const float sample_x = x + cosf(angle) * radius;
     const float sample_z = z + sinf(angle) * radius;
     const float sample_height =
-        terrain_get_height(sample_x, sample_z, settings);
+        terrain_get_render_height(sample_x, sample_z, settings);
     if (sample_height < lowest_height) {
       lowest_height = sample_height;
     }
@@ -4895,10 +4895,10 @@ static float palm_render_hash_unit(int x, int z, unsigned int seed) {
 static float palm_render_estimate_slope(float x, float z,
                                         const SceneSettings *settings) {
   const float sample_offset = 3.0f;
-  const float x0 = terrain_get_height(x - sample_offset, z, settings);
-  const float x1 = terrain_get_height(x + sample_offset, z, settings);
-  const float z0 = terrain_get_height(x, z - sample_offset, settings);
-  const float z1 = terrain_get_height(x, z + sample_offset, settings);
+  const float x0 = terrain_get_render_height(x - sample_offset, z, settings);
+  const float x1 = terrain_get_render_height(x + sample_offset, z, settings);
+  const float z0 = terrain_get_render_height(x, z - sample_offset, settings);
+  const float z1 = terrain_get_render_height(x, z + sample_offset, settings);
   const float dx = fabsf(x1 - x0) / (sample_offset * 2.0f);
   const float dz = fabsf(z1 - z0) / (sample_offset * 2.0f);
 

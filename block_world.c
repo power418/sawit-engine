@@ -88,7 +88,7 @@ void block_world_update_target(BlockWorld* world, const CameraState* camera, con
     const float sample_x = camera->x + direction_x * sample_distance;
     const float sample_y = camera->y + direction_y * sample_distance;
     const float sample_z = camera->z + direction_z * sample_distance;
-    const float terrain_height = terrain_get_height(sample_x, sample_z, active_settings);
+    const float terrain_height = terrain_get_render_height(sample_x, sample_z, active_settings);
     const int cell_x = (int)floorf(sample_x);
     const int cell_y = (int)floorf(sample_y);
     const int cell_z = (int)floorf(sample_z);
@@ -424,12 +424,12 @@ static int block_world_get_support_height(int x, int z, const SceneSettings* set
     { 0.50f, 0.85f },
     { 0.85f, 0.85f }
   };
-  float highest_terrain = terrain_get_height((float)x + 0.5f, (float)z + 0.5f, settings);
+  float highest_terrain = terrain_get_render_height((float)x + 0.5f, (float)z + 0.5f, settings);
   int sample_index = 0;
 
   for (sample_index = 0; sample_index < 9; ++sample_index)
   {
-    const float sample_height = terrain_get_height((float)x + sample_offsets[sample_index][0], (float)z + sample_offsets[sample_index][1], settings);
+    const float sample_height = terrain_get_render_height((float)x + sample_offsets[sample_index][0], (float)z + sample_offsets[sample_index][1], settings);
     if (sample_height > highest_terrain)
     {
       highest_terrain = sample_height;

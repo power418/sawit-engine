@@ -1,6 +1,6 @@
 float sample_shadow_map_pcf(vec4 light_pos_value, vec3 normal, vec3 light_dir, sampler2D shadow_map_tex)
 {
-  const vec2 poisson_disk[16] = vec2[](
+  const vec2 poisson_disk[12] = vec2[](
     vec2(-0.326, -0.406),
     vec2(-0.840, -0.074),
     vec2(-0.696, 0.457),
@@ -12,13 +12,9 @@ float sample_shadow_map_pcf(vec4 light_pos_value, vec3 normal, vec3 light_dir, s
     vec2(0.507, 0.064),
     vec2(0.896, 0.412),
     vec2(-0.322, -0.933),
-    vec2(-0.792, -0.598),
-    vec2(-0.094, -0.182),
-    vec2(0.211, 0.295),
-    vec2(-0.443, 0.204),
-    vec2(0.678, -0.742)
+    vec2(-0.094, -0.182)
   );
-  const float poisson_weight[16] = float[](1.0, 0.92, 0.88, 0.86, 1.0, 0.92, 0.84, 0.82, 0.78, 0.74, 0.70, 0.68, 0.96, 0.90, 0.76, 0.72);
+  const float poisson_weight[12] = float[](1.0, 0.92, 0.88, 0.86, 1.0, 0.92, 0.84, 0.82, 0.78, 0.74, 0.70, 0.96);
   vec3 projected = light_pos_value.xyz / light_pos_value.w;
   projected = projected * 0.5 + 0.5;
 
@@ -39,7 +35,7 @@ float sample_shadow_map_pcf(vec4 light_pos_value, vec3 normal, vec3 light_dir, s
   float kernel_radius = 1.1;
   int tap_index = 0;
 
-  for (tap_index = 0; tap_index < 8; ++tap_index)
+  for (tap_index = 0; tap_index < 5; ++tap_index)
   {
     vec2 sample_offset = poisson_disk[tap_index] * texel * blocker_search_radius;
     float sample_depth = texture(shadow_map_tex, projected.xy + sample_offset).r;
@@ -54,12 +50,12 @@ float sample_shadow_map_pcf(vec4 light_pos_value, vec3 normal, vec3 light_dir, s
   {
     float average_blocker = blocker_depth / blocker_count;
     float depth_gap = clamp((projected.z - average_blocker) * 240.0, 0.0, 1.0);
-    float blocker_ratio = blocker_count / 8.0;
-    kernel_radius = mix(1.0, mix(1.4, 4.8, depth_gap), blocker_ratio);
-    kernel_radius *= mix(1.0, 1.55, clamp(slope, 0.0, 1.0));
+    float blocker_ratio = blocker_count / 5.0;
+    kernel_radius = mix(1.0, mix(1.3, 4.2, depth_gap), blocker_ratio);
+    kernel_radius *= mix(1.0, 1.42, clamp(slope, 0.0, 1.0));
   }
 
-  for (tap_index = 0; tap_index < 16; ++tap_index)
+  for (tap_index = 0; tap_index < 12; ++tap_index)
   {
     vec2 sample_offset = poisson_disk[tap_index] * texel * kernel_radius;
     float sample_depth = texture(shadow_map_tex, projected.xy + sample_offset).r;
@@ -93,17 +89,17 @@ float raytrace_heightfield_shadow(vec3 world_pos_value, vec3 light_dir)
 
   ray_xz_dir = light_xz / xz_length;
 
-  for (int i = 0; i < 12; ++i)
+  for (int i = 0; i < 7; ++i)
   {
-    float step_t = (float(i) + 0.5) / 12.0;
-    float distance = mix(5.0, 260.0, step_t * step_t);
+    float step_t = (float(i) + 0.5) / 7.0;
+    float distance = mix(6.0, 220.0, step_t * step_t);
     vec2 probe_xz = world_pos_value.xz + ray_xz_dir * distance;
     float ray_height = world_pos_value.y + 1.25 + light_dir.y / xz_length * distance;
     float terrain_y = terrain_height(probe_xz);
     float clearance = ray_height - terrain_y;
     float soft_width = mix(0.9, 8.0, step_t) + low_sun_softness * 3.0;
     float blocker = 1.0 - smoothstep(0.0, soft_width, clearance);
-    float distance_weight = 1.0 - smoothstep(170.0, 270.0, distance);
+    float distance_weight = 1.0 - smoothstep(145.0, 225.0, distance);
     horizon_block = max(horizon_block, blocker * distance_weight);
   }
 
@@ -113,6 +109,12 @@ float raytrace_heightfield_shadow(vec3 world_pos_value, vec3 light_dir)
 float raytrace_direct_visibility(vec4 light_pos_value, vec3 world_pos_value, vec3 normal, vec3 light_dir, sampler2D shadow_map_tex)
 {
   float shadow_map_visibility = sample_shadow_map_pcf(light_pos_value, normal, light_dir, shadow_map_tex);
+  float heightfield_visibility = raytrace_heightfield_shadow(world_pos_value, light_dir);
+  return shadow_map_visibility * mix(0.55, 1.0, heightfield_visibility);
+}
+
+float raytrace_direct_visibility_from_shadow(float shadow_map_visibility, vec3 world_pos_value, vec3 light_dir)
+{
   float heightfield_visibility = raytrace_heightfield_shadow(world_pos_value, light_dir);
   return shadow_map_visibility * mix(0.55, 1.0, heightfield_visibility);
 }

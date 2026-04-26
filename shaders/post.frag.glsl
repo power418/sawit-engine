@@ -12,7 +12,9 @@ uniform vec4 post_quality;
 void main()
 {
   vec2 texel_size = 1.0 / vec2(textureSize(tex[0], 0));
-  vec3 scene_color = post_apply_fxaa(UV, texel_size, post_quality.y);
+  vec3 scene_color = (post_quality.y < 0.86)
+    ? texture(tex[0], UV).rgb
+    : post_apply_fxaa(UV, texel_size, post_quality.y);
 
   color = vec4(scene_color, 1.0);
   if (post_quality.x > 0.5)

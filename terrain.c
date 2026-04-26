@@ -183,8 +183,8 @@ static float terrain_fbm2(float x, float z)
 
   for (i = 0; i < 5; ++i)
   {
-    const float next_x = 1.6f * x + 1.2f * z;
-    const float next_z = -1.2f * x + 1.6f * z;
+    const float next_x = 1.6f * x - 1.2f * z;
+    const float next_z = 1.2f * x + 1.6f * z;
     value += amplitude * terrain_noise2(x, z);
     x = next_x;
     z = next_z;

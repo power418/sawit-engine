@@ -62,6 +62,15 @@ int app_run(void)
   renderer_sync_terrain_render_sampling(&app.renderer, &app.player.camera);
   app.previous_time_seconds = platform_get_time_seconds(&app.platform);
   diagnostics_log("app_run: entering main loop");
+  if (audio_start_music(&music_audio))
+  {
+    music_started = 1;
+  }
+  else
+  {
+    next_music_attempt_time_seconds = app.previous_time_seconds + 2.5f;
+  }
+  app.previous_time_seconds = platform_get_time_seconds(&app.platform);
 
   while (app.platform.running)
   {
