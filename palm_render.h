@@ -5,6 +5,7 @@
 #include "gl_headers.h"
 #include "render_quality.h"
 #include "scene_settings.h"
+#include "terrain.h"
 #include "view_frustum.h"
 
 #include <stddef.h>
@@ -96,6 +97,14 @@ int palm_render_update(
   const CameraState* camera,
   const SceneSettings* settings,
   const RendererQualityProfile* quality);
+int palm_render_collect_contact_patches(
+  const PalmRenderMesh* mesh,
+  float camera_x,
+  float camera_z,
+  TerrainContactPatch* patches,
+  float* patch_distances,
+  int patch_count,
+  int patch_capacity);
 void palm_render_draw(const PalmRenderMesh* mesh);
 
 #endif

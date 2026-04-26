@@ -4,6 +4,8 @@
 #include <stddef.h>
 
 static TerrainRenderSamplingConfig g_terrain_render_sampling = { 0 };
+static TerrainContactPatch g_terrain_contact_patches[TERRAIN_CONTACT_PATCH_CAPACITY] = { 0 };
+static int g_terrain_contact_patch_count = 0;
 
 static float terrain_fract(float value);
 static float terrain_hash2(float x, float z);
@@ -11,8 +13,10 @@ static float terrain_mix(float a, float b, float t);
 static float terrain_smoothstep(float edge0, float edge1, float value);
 static float terrain_noise2(float x, float z);
 static float terrain_fbm2(float x, float z);
+static float terrain_apply_contact_patches(float x, float z, float base_height);
+static float terrain_get_render_sampled_height(float x, float z, const SceneSettings* settings, int include_contact_patches);
 
-float terrain_get_height(float x, float z, const SceneSettings* settings)
+float terrain_get_base_height(float x, float z, const SceneSettings* settings)
 {
   const SceneSettings fallback_settings = scene_settings_default();
   const SceneSettings* active_settings = (settings != NULL) ? settings : &fallback_settings;
@@ -35,6 +39,11 @@ float terrain_get_height(float x, float z, const SceneSettings* settings)
   return active_settings->terrain_base_height + relief * height_scale;
 }
 
+float terrain_get_height(float x, float z, const SceneSettings* settings)
+{
+  return terrain_apply_contact_patches(x, z, terrain_get_base_height(x, z, settings));
+}
+
 void terrain_set_render_sampling(const TerrainRenderSamplingConfig* config)
 {
   if (config == NULL || config->valid == 0 || config->mesh_step <= 0.0f || config->half_extent <= 0.0f)
@@ -50,7 +59,78 @@ void terrain_set_render_sampling(const TerrainRenderSamplingConfig* config)
   g_terrain_render_sampling = *config;
 }
 
+float terrain_get_render_base_height(float x, float z, const SceneSettings* settings)
+{
+  return terrain_get_render_sampled_height(x, z, settings, 0);
+}
+
 float terrain_get_render_height(float x, float z, const SceneSettings* settings)
+{
+  return terrain_get_render_sampled_height(x, z, settings, 1);
+}
+
+void terrain_set_contact_patches(const TerrainContactPatch* patches, int patch_count)
+{
+  int patch_index = 0;
+
+  if (patches == NULL || patch_count <= 0)
+  {
+    g_terrain_contact_patch_count = 0;
+    return;
+  }
+
+  if (patch_count > TERRAIN_CONTACT_PATCH_CAPACITY)
+  {
+    patch_count = TERRAIN_CONTACT_PATCH_CAPACITY;
+  }
+
+  for (patch_index = 0; patch_index < patch_count; ++patch_index)
+  {
+    g_terrain_contact_patches[patch_index] = patches[patch_index];
+    if (g_terrain_contact_patches[patch_index].inner_radius < 0.0f)
+    {
+      g_terrain_contact_patches[patch_index].inner_radius = 0.0f;
+    }
+    if (g_terrain_contact_patches[patch_index].outer_radius <= g_terrain_contact_patches[patch_index].inner_radius)
+    {
+      g_terrain_contact_patches[patch_index].outer_radius = g_terrain_contact_patches[patch_index].inner_radius + 0.01f;
+    }
+    if (g_terrain_contact_patches[patch_index].strength < 0.0f)
+    {
+      g_terrain_contact_patches[patch_index].strength = 0.0f;
+    }
+    else if (g_terrain_contact_patches[patch_index].strength > 1.0f)
+    {
+      g_terrain_contact_patches[patch_index].strength = 1.0f;
+    }
+  }
+
+  g_terrain_contact_patch_count = patch_count;
+}
+
+int terrain_get_contact_patches(TerrainContactPatch* out_patches, int max_patch_count)
+{
+  int copy_count = g_terrain_contact_patch_count;
+  int patch_index = 0;
+
+  if (out_patches == NULL || max_patch_count <= 0)
+  {
+    return g_terrain_contact_patch_count;
+  }
+  if (copy_count > max_patch_count)
+  {
+    copy_count = max_patch_count;
+  }
+
+  for (patch_index = 0; patch_index < copy_count; ++patch_index)
+  {
+    out_patches[patch_index] = g_terrain_contact_patches[patch_index];
+  }
+
+  return copy_count;
+}
+
+static float terrain_get_render_sampled_height(float x, float z, const SceneSettings* settings, int include_contact_patches)
 {
   const float total_extent = g_terrain_render_sampling.half_extent * 2.0f;
   const int cell_count =
@@ -74,14 +154,14 @@ float terrain_get_render_height(float x, float z, const SceneSettings* settings)
 
   if (g_terrain_render_sampling.valid == 0 || g_terrain_render_sampling.mesh_step <= 0.0f || cell_count <= 0)
   {
-    return terrain_get_height(x, z, settings);
+    return (include_contact_patches != 0) ? terrain_get_height(x, z, settings) : terrain_get_base_height(x, z, settings);
   }
 
   local_x = x - g_terrain_render_sampling.origin_x + g_terrain_render_sampling.half_extent;
   local_z = z - g_terrain_render_sampling.origin_z + g_terrain_render_sampling.half_extent;
   if (local_x < 0.0f || local_z < 0.0f || local_x > total_extent || local_z > total_extent)
   {
-    return terrain_get_height(x, z, settings);
+    return (include_contact_patches != 0) ? terrain_get_height(x, z, settings) : terrain_get_base_height(x, z, settings);
   }
 
   cell_x = (int)floorf(local_x / g_terrain_render_sampling.mesh_step);
@@ -109,10 +189,10 @@ float terrain_get_render_height(float x, float z, const SceneSettings* settings)
   x1 = x0 + g_terrain_render_sampling.mesh_step;
   z0 = g_terrain_render_sampling.origin_z - g_terrain_render_sampling.half_extent + (float)cell_z * g_terrain_render_sampling.mesh_step;
   z1 = z0 + g_terrain_render_sampling.mesh_step;
-  h00 = terrain_get_height(x0, z0, settings);
-  h10 = terrain_get_height(x1, z0, settings);
-  h01 = terrain_get_height(x0, z1, settings);
-  h11 = terrain_get_height(x1, z1, settings);
+  h00 = (include_contact_patches != 0) ? terrain_get_height(x0, z0, settings) : terrain_get_base_height(x0, z0, settings);
+  h10 = (include_contact_patches != 0) ? terrain_get_height(x1, z0, settings) : terrain_get_base_height(x1, z0, settings);
+  h01 = (include_contact_patches != 0) ? terrain_get_height(x0, z1, settings) : terrain_get_base_height(x0, z1, settings);
+  h11 = (include_contact_patches != 0) ? terrain_get_height(x1, z1, settings) : terrain_get_base_height(x1, z1, settings);
 
   if (frac_x + frac_z <= 1.0f)
   {
@@ -192,4 +272,32 @@ static float terrain_fbm2(float x, float z)
   }
 
   return value;
+}
+
+static float terrain_apply_contact_patches(float x, float z, float base_height)
+{
+  float height = base_height;
+  int patch_index = 0;
+
+  for (patch_index = 0; patch_index < g_terrain_contact_patch_count; ++patch_index)
+  {
+    const TerrainContactPatch* patch = &g_terrain_contact_patches[patch_index];
+    const float dx = x - patch->x;
+    const float dz = z - patch->z;
+    const float distance = sqrtf(dx * dx + dz * dz);
+    const float inner_radius = (patch->inner_radius > 0.0f) ? patch->inner_radius : 0.0f;
+    const float outer_radius =
+      (patch->outer_radius > inner_radius + 0.01f) ? patch->outer_radius : (inner_radius + 0.01f);
+    const float falloff = 1.0f - terrain_smoothstep(inner_radius, outer_radius, distance);
+    const float blend = falloff * patch->strength;
+
+    if (blend <= 0.0001f)
+    {
+      continue;
+    }
+
+    height = terrain_mix(height, patch->target_y, blend);
+  }
+
+  return height;
 }

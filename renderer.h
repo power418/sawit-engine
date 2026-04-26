@@ -55,6 +55,9 @@ typedef struct Renderer
   GLint terrain_shadow_map_location;
   GLint terrain_lighting_quality_location;
   GLint terrain_environment_location;
+  GLint terrain_contact_count_location;
+  GLint terrain_contact_data_location;
+  GLint terrain_contact_params_location;
   GLint palm_projection_location;
   GLint palm_view_location;
   GLint palm_light_view_projection_location;
@@ -70,6 +73,9 @@ typedef struct Renderer
   GLint shadow_light_view_projection_location;
   GLint shadow_origin_location;
   GLint shadow_shape_location;
+  GLint shadow_contact_count_location;
+  GLint shadow_contact_data_location;
+  GLint shadow_contact_params_location;
   GLint post_quality_location;
   PalmRenderMesh palm_mesh;
   MountainRenderMesh mountain_mesh;

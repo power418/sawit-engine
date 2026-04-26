@@ -64,6 +64,7 @@ static void renderer_get_terrain_origin(const Renderer* renderer, const CameraSt
 static void renderer_transform_point(const Matrix* matrix, float x, float y, float z, float w, float* out_x, float* out_y, float* out_z, float* out_w);
 static Matrix renderer_get_stabilized_shadow_matrix(const Renderer* renderer, const Matrix* light_view, const Matrix* light_projection);
 static Matrix renderer_get_light_view_projection_matrix(const Renderer* renderer, const CameraState* camera, const AtmosphereState* atmosphere, const SceneSettings* settings);
+static void renderer_upload_terrain_contact_uniforms(GLint count_location, GLint data_location, GLint params_location, const TerrainContactPatch* patches, int patch_count);
 static void renderer_log_quality_profile(const char* context, const Renderer* renderer);
 
 int renderer_create(Renderer* renderer, int width, int height)
@@ -144,6 +145,9 @@ int renderer_create(Renderer* renderer, int width, int height)
   renderer->terrain_shadow_map_location = glGetUniformLocation(renderer->terrain_program, "shadow_map");
   renderer->terrain_lighting_quality_location = glGetUniformLocation(renderer->terrain_program, "lighting_quality");
   renderer->terrain_environment_location = glGetUniformLocation(renderer->terrain_program, "environment_settings");
+  renderer->terrain_contact_count_location = glGetUniformLocation(renderer->terrain_program, "terrain_contact_count");
+  renderer->terrain_contact_data_location = glGetUniformLocation(renderer->terrain_program, "terrain_contact_data[0]");
+  renderer->terrain_contact_params_location = glGetUniformLocation(renderer->terrain_program, "terrain_contact_params[0]");
   renderer->palm_projection_location = glGetUniformLocation(renderer->palm_program, "P");
   renderer->palm_view_location = glGetUniformLocation(renderer->palm_program, "V");
   renderer->palm_light_view_projection_location = glGetUniformLocation(renderer->palm_program, "light_vp");
@@ -159,6 +163,9 @@ int renderer_create(Renderer* renderer, int width, int height)
   renderer->shadow_light_view_projection_location = glGetUniformLocation(renderer->shadow_program, "light_vp");
   renderer->shadow_origin_location = glGetUniformLocation(renderer->shadow_program, "terrain_origin");
   renderer->shadow_shape_location = glGetUniformLocation(renderer->shadow_program, "terrain_shape");
+  renderer->shadow_contact_count_location = glGetUniformLocation(renderer->shadow_program, "terrain_contact_count");
+  renderer->shadow_contact_data_location = glGetUniformLocation(renderer->shadow_program, "terrain_contact_data[0]");
+  renderer->shadow_contact_params_location = glGetUniformLocation(renderer->shadow_program, "terrain_contact_params[0]");
   renderer->post_quality_location = glGetUniformLocation(renderer->post_program, "post_quality");
 
   glUseProgram(renderer->post_program);
@@ -426,11 +433,41 @@ void renderer_render(
   const Matrix light_view_projection = renderer_get_light_view_projection_matrix(renderer, camera, atmosphere, active_settings);
   const int shadow_update_interval = (renderer->quality.shadow_update_interval > 1) ? renderer->quality.shadow_update_interval : 1;
   const int refresh_shadows = (renderer->shadow_ready == 0) || ((renderer->frame_index % (unsigned int)shadow_update_interval) == 0U);
+  TerrainContactPatch terrain_contact_patches[TERRAIN_CONTACT_PATCH_CAPACITY] = { 0 };
+  float terrain_contact_distances[TERRAIN_CONTACT_PATCH_CAPACITY] = { 0.0f };
+  int terrain_contact_count = 0;
+  int terrain_contact_capacity = TERRAIN_CONTACT_PATCH_CAPACITY;
+
+  if (renderer->quality.render_scale <= 0.62f)
+  {
+    terrain_contact_capacity = 6;
+  }
+  else if (renderer->quality.render_scale < 0.86f || renderer->quality.shadow_update_interval > 1)
+  {
+    terrain_contact_capacity = 10;
+  }
 
   (void)palm_render_update(&renderer->palm_mesh, camera, active_settings, &renderer->quality);
   (void)mountain_render_update(&renderer->mountain_mesh, camera, active_settings, &renderer->quality, &world_frustum);
   (void)tree_render_update(&renderer->tree_mesh, camera, active_settings, &renderer->quality, &world_frustum);
   (void)grass_render_update(&renderer->grass_mesh, camera, active_settings, &renderer->quality, &world_frustum);
+  terrain_contact_count = palm_render_collect_contact_patches(
+    &renderer->palm_mesh,
+    camera->x,
+    camera->z,
+    terrain_contact_patches,
+    terrain_contact_distances,
+    terrain_contact_count,
+    terrain_contact_capacity);
+  terrain_contact_count = palm_render_collect_contact_patches(
+    &renderer->tree_mesh,
+    camera->x,
+    camera->z,
+    terrain_contact_patches,
+    terrain_contact_distances,
+    terrain_contact_count,
+    terrain_contact_capacity);
+  terrain_set_contact_patches(terrain_contact_patches, terrain_contact_count);
   renderer_get_terrain_origin(renderer, camera, &terrain_origin_x, &terrain_origin_z);
 
   if (refresh_shadows)
@@ -457,6 +494,12 @@ void renderer_render(
     {
       glUniform4fv(renderer->shadow_shape_location, 1, terrain_shape);
     }
+    renderer_upload_terrain_contact_uniforms(
+      renderer->shadow_contact_count_location,
+      renderer->shadow_contact_data_location,
+      renderer->shadow_contact_params_location,
+      terrain_contact_patches,
+      terrain_contact_count);
     glBindVertexArray(renderer->shadow_terrain_vao != 0U ? renderer->shadow_terrain_vao : renderer->terrain_vao);
     glDrawElements(
       GL_TRIANGLES,
@@ -579,6 +622,12 @@ void renderer_render(
   {
     glUniform4fv(renderer->terrain_environment_location, 1, environment_settings);
   }
+  renderer_upload_terrain_contact_uniforms(
+    renderer->terrain_contact_count_location,
+    renderer->terrain_contact_data_location,
+    renderer->terrain_contact_params_location,
+    terrain_contact_patches,
+    terrain_contact_count);
   glActiveTexture(GL_TEXTURE2);
   glBindTexture(GL_TEXTURE_2D, renderer->shadow_texture);
   glBindVertexArray(renderer->shadow_terrain_vao != 0U ? renderer->shadow_terrain_vao : renderer->terrain_vao);
@@ -1651,6 +1700,51 @@ static Matrix renderer_get_light_view_projection_matrix(const Renderer* renderer
   );
 
   return renderer_get_stabilized_shadow_matrix(renderer, &light_view, &light_projection);
+}
+
+static void renderer_upload_terrain_contact_uniforms(GLint count_location, GLint data_location, GLint params_location, const TerrainContactPatch* patches, int patch_count)
+{
+  GLfloat contact_data[TERRAIN_CONTACT_PATCH_CAPACITY * 4] = { 0.0f };
+  GLfloat contact_params[TERRAIN_CONTACT_PATCH_CAPACITY * 4] = { 0.0f };
+  int patch_index = 0;
+
+  if (patch_count < 0)
+  {
+    patch_count = 0;
+  }
+  if (patch_count > TERRAIN_CONTACT_PATCH_CAPACITY)
+  {
+    patch_count = TERRAIN_CONTACT_PATCH_CAPACITY;
+  }
+
+  if (count_location >= 0)
+  {
+    glUniform1i(count_location, patch_count);
+  }
+
+  if (patches == NULL || patch_count <= 0)
+  {
+    return;
+  }
+
+  for (patch_index = 0; patch_index < patch_count; ++patch_index)
+  {
+    contact_data[patch_index * 4 + 0] = patches[patch_index].x;
+    contact_data[patch_index * 4 + 1] = patches[patch_index].z;
+    contact_data[patch_index * 4 + 2] = patches[patch_index].target_y;
+    contact_data[patch_index * 4 + 3] = patches[patch_index].inner_radius;
+    contact_params[patch_index * 4 + 0] = patches[patch_index].outer_radius;
+    contact_params[patch_index * 4 + 1] = patches[patch_index].strength;
+  }
+
+  if (data_location >= 0)
+  {
+    glUniform4fv(data_location, patch_count, contact_data);
+  }
+  if (params_location >= 0)
+  {
+    glUniform4fv(params_location, patch_count, contact_params);
+  }
 }
 
 static void renderer_log_quality_profile(const char* context, const Renderer* renderer)

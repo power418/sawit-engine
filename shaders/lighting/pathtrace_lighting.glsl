@@ -42,7 +42,7 @@ float pathtrace_heightfield_visibility(vec3 origin, vec3 direction, float max_di
     float distance = max_distance * (0.18 + 0.18 * float(i));
     vec2 probe_xz = origin.xz + dir_xz / xz_length * distance;
     float ray_height = origin.y + direction.y / xz_length * distance;
-    float terrain_y = terrain_height(probe_xz);
+    float terrain_y = terrain_base_height(probe_xz);
     occlusion = max(occlusion, smoothstep(ray_height - 2.0, ray_height + 4.5, terrain_y));
   }
 

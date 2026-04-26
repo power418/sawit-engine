@@ -95,7 +95,7 @@ float raytrace_heightfield_shadow(vec3 world_pos_value, vec3 light_dir)
     float distance = mix(6.0, 220.0, step_t * step_t);
     vec2 probe_xz = world_pos_value.xz + ray_xz_dir * distance;
     float ray_height = world_pos_value.y + 1.25 + light_dir.y / xz_length * distance;
-    float terrain_y = terrain_height(probe_xz);
+    float terrain_y = terrain_base_height(probe_xz);
     float clearance = ray_height - terrain_y;
     float soft_width = mix(0.9, 8.0, step_t) + low_sun_softness * 3.0;
     float blocker = 1.0 - smoothstep(0.0, soft_width, clearance);

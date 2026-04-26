@@ -369,6 +369,12 @@ static PalmRenderVariant *palm_render_pick_variant(PalmRenderMesh *mesh,
 static void palm_render_reset_instances(PalmRenderMesh *mesh);
 static int palm_render_upload_instances(PalmRenderMesh *mesh,
                                         const ViewFrustum *frustum);
+static int palm_render_insert_contact_patch(TerrainContactPatch *patches,
+                                            float *patch_distances,
+                                            int patch_count,
+                                            int patch_capacity,
+                                            TerrainContactPatch patch,
+                                            float distance_score);
 static int palm_render_float_nearly_equal(float a, float b, float epsilon);
 static int
 palm_render_instance_intersects_frustum(const PalmRenderVariant *variant,
@@ -408,7 +414,8 @@ palm_render_sample_lowest_terrain_ring(float x, float z, float radius,
 static void palm_render_build_instance_transform(PalmInstanceData *instance,
                                                  float x, float y, float z,
                                                  float scale, float yaw_radians,
-                                                 PalmColor tint);
+                                                 PalmColor tint,
+                                                 float terrain_lock_depth);
 
 int palm_render_create(PalmRenderMesh *mesh) {
   if (mesh == NULL) {
@@ -757,6 +764,87 @@ int palm_render_update(PalmRenderMesh *mesh, const CameraState *camera,
                        const RendererQualityProfile *quality) {
   return palm_render_update_category(mesh, PALM_RENDER_CATEGORY_PALM, camera,
                                      settings, quality);
+}
+
+int palm_render_collect_contact_patches(
+    const PalmRenderMesh *mesh, float camera_x, float camera_z,
+    TerrainContactPatch *patches, float *patch_distances, int patch_count,
+    int patch_capacity) {
+  int variant_index = 0;
+
+  if (mesh == NULL || patches == NULL || patch_count < 0 ||
+      patch_capacity <= 0 || patch_count > patch_capacity) {
+    return patch_count;
+  }
+
+  for (variant_index = 0; variant_index < mesh->variant_count;
+       ++variant_index) {
+    const PalmRenderVariant *variant = &mesh->variants[variant_index];
+    const PalmInstanceData *instances = NULL;
+    GLsizei instance_count = variant->visible_instance_count;
+    GLsizei instance_index = 0;
+
+    if (variant->category == PALM_RENDER_CATEGORY_GRASS ||
+        variant->category == PALM_RENDER_CATEGORY_MOUNTAIN ||
+        variant->vertex_count <= 0) {
+      continue;
+    }
+
+    if (variant->cpu_visible_instances != NULL) {
+      instances = (const PalmInstanceData *)variant->cpu_visible_instances;
+      instance_count = variant->visible_instance_count;
+    } else {
+      instances = (const PalmInstanceData *)variant->cpu_instances;
+      instance_count = variant->instance_count;
+    }
+    if (instances == NULL || instance_count <= 0) {
+      continue;
+    }
+
+    for (instance_index = 0; instance_index < instance_count;
+         ++instance_index) {
+      const PalmInstanceData *instance = &instances[instance_index];
+      const float x = instance->transform[12];
+      const float z = instance->transform[14];
+      const float dx = x - camera_x;
+      const float dz = z - camera_z;
+      const float scale =
+          (fabsf(instance->transform[5]) > 0.0001f)
+              ? fabsf(instance->transform[5])
+              : 1.0f;
+      const float target_y = instance->transform[13] + instance->tint[3];
+      const float footprint_radius = variant->model_radius * scale;
+      const int is_house = (variant->category == PALM_RENDER_CATEGORY_HOUSE);
+      TerrainContactPatch patch = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+      float distance_score = dx * dx + dz * dz;
+
+      patch.x = x;
+      patch.z = z;
+      patch.target_y = target_y;
+      if (is_house) {
+        patch.inner_radius =
+            palm_render_clamp(footprint_radius * 0.86f, 7.0f, 34.0f);
+        patch.outer_radius =
+            patch.inner_radius +
+            palm_render_clamp(patch.inner_radius * 0.55f, 7.0f, 18.0f);
+        patch.strength = 1.0f;
+        distance_score *= 0.06f;
+      } else {
+        patch.inner_radius =
+            palm_render_clamp(footprint_radius * 0.18f, 4.0f, 9.0f);
+        patch.outer_radius =
+            patch.inner_radius +
+            palm_render_clamp(patch.inner_radius * 1.8f, 7.0f, 16.0f);
+        patch.strength = 0.58f;
+      }
+
+      patch_count = palm_render_insert_contact_patch(
+          patches, patch_distances, patch_count, patch_capacity, patch,
+          distance_score);
+    }
+  }
+
+  return patch_count;
 }
 
 void palm_render_draw(const PalmRenderMesh *mesh) {
@@ -3840,6 +3928,53 @@ static int palm_render_upload_instances(PalmRenderMesh *mesh,
   return 1;
 }
 
+static int palm_render_insert_contact_patch(TerrainContactPatch *patches,
+                                            float *patch_distances,
+                                            int patch_count,
+                                            int patch_capacity,
+                                            TerrainContactPatch patch,
+                                            float distance_score) {
+  int insert_index = patch_count;
+  int move_index = 0;
+
+  if (patches == NULL || patch_capacity <= 0) {
+    return patch_count;
+  }
+
+  if (patch_distances == NULL) {
+    if (patch_count >= patch_capacity) {
+      return patch_count;
+    }
+    patches[patch_count] = patch;
+    return patch_count + 1;
+  }
+
+  if (patch_count >= patch_capacity &&
+      distance_score >= patch_distances[patch_capacity - 1]) {
+    return patch_count;
+  }
+
+  if (patch_count >= patch_capacity) {
+    insert_index = patch_capacity - 1;
+  }
+
+  while (insert_index > 0 && distance_score < patch_distances[insert_index - 1]) {
+    insert_index -= 1;
+  }
+
+  move_index = (patch_count < patch_capacity) ? patch_count : (patch_capacity - 1);
+  while (move_index > insert_index) {
+    patches[move_index] = patches[move_index - 1];
+    patch_distances[move_index] = patch_distances[move_index - 1];
+    move_index -= 1;
+  }
+
+  patches[insert_index] = patch;
+  patch_distances[insert_index] = distance_score;
+
+  return (patch_count < patch_capacity) ? (patch_count + 1) : patch_capacity;
+}
+
 static int palm_render_float_nearly_equal(float a, float b, float epsilon) {
   return fabsf(a - b) <= epsilon;
 }
@@ -4106,7 +4241,7 @@ static int palm_render_populate_palm_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 4U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_render_height(x, z, settings);
+        const float ground_y = terrain_get_render_base_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         PalmColor tint = {
@@ -4141,7 +4276,7 @@ static int palm_render_populate_palm_instances(
             &((PalmInstanceData *)
                   variant->cpu_instances)[variant->instance_count],
             x, ground_y - embed_depth, z,
-            desired_height / variant->model_height, yaw, tint);
+            desired_height / variant->model_height, yaw, tint, embed_depth);
         variant->instance_count += 1;
       }
     }
@@ -4190,7 +4325,7 @@ static int palm_render_add_house_instance(PalmRenderMesh *mesh, int grid_x,
   const float slope = palm_render_estimate_slope(x, z, settings);
   PalmRenderVariant *variant = palm_render_pick_variant(
       mesh, PALM_RENDER_CATEGORY_HOUSE, grid_x, grid_z, 83U);
-  const float ground_y = terrain_get_render_height(x, z, settings);
+  const float ground_y = terrain_get_render_base_height(x, z, settings);
   const float size_bias = palm_render_mix(
       0.94f, 1.08f, palm_render_clamp(settings->palm_size, 0.0f, 1.0f));
   PalmColor tint = {palm_render_mix(0.92f, 1.04f, variation),
@@ -4219,7 +4354,7 @@ static int palm_render_add_house_instance(PalmRenderMesh *mesh, int grid_x,
   palm_render_build_instance_transform(
       &((PalmInstanceData *)variant->cpu_instances)[variant->instance_count], x,
       ground_y - embed_depth, z, desired_height / variant->model_height, yaw,
-      tint);
+      tint, embed_depth);
   variant->instance_count += 1;
 
   if (in_out_near_count != NULL && distance <= 110.0f) {
@@ -4451,7 +4586,7 @@ static int palm_render_populate_tree_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 45U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_render_height(x, z, settings);
+        const float ground_y = terrain_get_render_base_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         PalmColor tint = {
@@ -4486,7 +4621,7 @@ static int palm_render_populate_tree_instances(
             &((PalmInstanceData *)
                   variant->cpu_instances)[variant->instance_count],
             x, ground_y - embed_depth, z,
-            desired_height / variant->model_height, yaw, tint);
+            desired_height / variant->model_height, yaw, tint, embed_depth);
         variant->instance_count += 1;
       }
     }
@@ -4617,7 +4752,7 @@ static int palm_render_populate_grass_instances(
         const float slope = palm_render_estimate_slope(x, z, settings);
         const float yaw = palm_render_hash_unit(grid_x, grid_z, 26U) *
                           (k_palm_render_pi * 2.0f);
-        const float ground_y = terrain_get_render_height(x, z, settings);
+        const float ground_y = terrain_get_render_base_height(x, z, settings);
         const float fruit_density =
             palm_render_clamp(settings->palm_fruit_density, 0.0f, 1.0f);
         const float hole_threshold = palm_render_mix(0.05f, 0.24f, patch);
@@ -4654,7 +4789,7 @@ static int palm_render_populate_grass_instances(
             &((PalmInstanceData *)
                   variant->cpu_instances)[variant->instance_count],
             x, ground_y - embed_depth, z,
-            desired_height / variant->model_height, yaw, tint);
+            desired_height / variant->model_height, yaw, tint, embed_depth);
         variant->instance_count += 1;
       }
     }
@@ -4739,7 +4874,7 @@ static int palm_render_populate_mountain_instances(
         angle_jitter;
     const float x = center_x + cosf(angle) * (ring_radius + radius_jitter);
     const float z = center_z + sinf(angle) * (ring_radius + radius_jitter);
-    const float ground_y = terrain_get_render_height(x, z, settings);
+    const float ground_y = terrain_get_render_base_height(x, z, settings);
     const float yaw =
         angle + palm_render_mix(-0.40f, 0.40f,
                                 palm_render_hash_unit(mountain_index, 0, 64U));
@@ -4782,7 +4917,7 @@ static int palm_render_populate_mountain_instances(
 
     palm_render_build_instance_transform(
         &((PalmInstanceData *)variant->cpu_instances)[variant->instance_count],
-        x, ground_y - embed_depth, z, scale, yaw, tint);
+        x, ground_y - embed_depth, z, scale, yaw, tint, embed_depth);
     variant->instance_count += 1;
   }
 
@@ -4862,7 +4997,7 @@ static void palm_render_get_terrain_origin_from_camera(
 static float
 palm_render_sample_lowest_terrain_ring(float x, float z, float radius,
                                        const SceneSettings *settings) {
-  float lowest_height = terrain_get_render_height(x, z, settings);
+  float lowest_height = terrain_get_render_base_height(x, z, settings);
   int sample_index = 0;
 
   if (settings == NULL || radius <= 0.01f) {
@@ -4875,7 +5010,7 @@ palm_render_sample_lowest_terrain_ring(float x, float z, float radius,
     const float sample_x = x + cosf(angle) * radius;
     const float sample_z = z + sinf(angle) * radius;
     const float sample_height =
-        terrain_get_render_height(sample_x, sample_z, settings);
+        terrain_get_render_base_height(sample_x, sample_z, settings);
     if (sample_height < lowest_height) {
       lowest_height = sample_height;
     }
@@ -4895,10 +5030,10 @@ static float palm_render_hash_unit(int x, int z, unsigned int seed) {
 static float palm_render_estimate_slope(float x, float z,
                                         const SceneSettings *settings) {
   const float sample_offset = 3.0f;
-  const float x0 = terrain_get_render_height(x - sample_offset, z, settings);
-  const float x1 = terrain_get_render_height(x + sample_offset, z, settings);
-  const float z0 = terrain_get_render_height(x, z - sample_offset, settings);
-  const float z1 = terrain_get_render_height(x, z + sample_offset, settings);
+  const float x0 = terrain_get_render_base_height(x - sample_offset, z, settings);
+  const float x1 = terrain_get_render_base_height(x + sample_offset, z, settings);
+  const float z0 = terrain_get_render_base_height(x, z - sample_offset, settings);
+  const float z1 = terrain_get_render_base_height(x, z + sample_offset, settings);
   const float dx = fabsf(x1 - x0) / (sample_offset * 2.0f);
   const float dz = fabsf(z1 - z0) / (sample_offset * 2.0f);
 
@@ -4908,7 +5043,8 @@ static float palm_render_estimate_slope(float x, float z,
 static void palm_render_build_instance_transform(PalmInstanceData *instance,
                                                  float x, float y, float z,
                                                  float scale, float yaw_radians,
-                                                 PalmColor tint) {
+                                                 PalmColor tint,
+                                                 float terrain_lock_depth) {
   const float c = cosf(yaw_radians) * scale;
   const float s = sinf(yaw_radians) * scale;
 
@@ -4929,5 +5065,5 @@ static void palm_render_build_instance_transform(PalmInstanceData *instance,
   instance->tint[0] = palm_render_clamp(tint.r, 0.75f, 1.25f);
   instance->tint[1] = palm_render_clamp(tint.g, 0.75f, 1.25f);
   instance->tint[2] = palm_render_clamp(tint.b, 0.75f, 1.25f);
-  instance->tint[3] = 1.0f;
+  instance->tint[3] = palm_render_clamp(terrain_lock_depth, 0.0f, 2048.0f);
 }
