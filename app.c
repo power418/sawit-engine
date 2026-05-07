@@ -53,6 +53,8 @@ int app_run(void)
     return 1;
   }
 
+  app.platform.overlay.sound_enabled = 1;
+
   app_apply_renderer_quality_defaults(&app);
   platform_set_render_quality_preset(&app.platform, renderer_get_quality_preset(&app.renderer));
   system_monitor_create(&app.system_monitor);
@@ -290,14 +292,26 @@ int app_run(void)
       &app.platform.overlay,
       &app.block_world);
     platform_swap_buffers(&app.platform);
-    if (music_started == 0 && current_time_seconds >= next_music_attempt_time_seconds)
+    if (app.platform.overlay.sound_enabled)
     {
-      if (audio_start_music(&music_audio))
+      if (music_started == 0 && current_time_seconds >= next_music_attempt_time_seconds)
       {
-        music_started = 1;
+        if (audio_start_music(&music_audio))
+        {
+          music_started = 1;
+        }
+        else
+        {
+          next_music_attempt_time_seconds = current_time_seconds + 2.5f;
+        }
       }
-      else
+    }
+    else
+    {
+      if (music_started != 0)
       {
+        audio_stop(&music_audio);
+        music_started = 0;
         next_music_attempt_time_seconds = current_time_seconds + 2.5f;
       }
     }

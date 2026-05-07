@@ -597,6 +597,9 @@ static void platform_toggle_value(PlatformApp* app, OverlayToggleId toggle_id)
     case OVERLAY_TOGGLE_FREEZE_TIME:
       app->overlay.freeze_time_enabled = (app->overlay.freeze_time_enabled == 0);
       break;
+    case OVERLAY_TOGGLE_SOUND:
+      app->overlay.sound_enabled = (app->overlay.sound_enabled == 0);
+      break;
     case OVERLAY_TOGGLE_CLOUDS:
       app->overlay.settings.clouds_enabled = (app->overlay.settings.clouds_enabled == 0);
       break;
@@ -612,6 +615,7 @@ static NSView* platform_create_settings_overlay(PlatformApp* app)
   static const OverlayToggleId k_toggle_ids[] = {
     OVERLAY_TOGGLE_GOD_MODE,
     OVERLAY_TOGGLE_FREEZE_TIME,
+    OVERLAY_TOGGLE_SOUND,
     OVERLAY_TOGGLE_CLOUDS
   };
   static const OverlaySliderId k_slider_ids[] = {
@@ -695,7 +699,7 @@ static NSView* platform_create_settings_overlay(PlatformApp* app)
   target->app = app;
   app->settings_action_target = target;
 
-  content_height = 40.0f + 3.0f * 30.0f + 96.0f + 88.0f + (CGFloat)(sizeof(k_slider_ids) / sizeof(k_slider_ids[0])) * 60.0f + 36.0f;
+  content_height = 40.0f + 4.0f * 30.0f + 96.0f + 88.0f + (CGFloat)(sizeof(k_slider_ids) / sizeof(k_slider_ids[0])) * 60.0f + 36.0f;
   form_view = [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, content_width, content_height)];
   [form_view setAutoresizingMask:NSViewWidthSizable];
   [scroll_view setDocumentView:form_view];
@@ -838,6 +842,7 @@ static void platform_sync_native_settings_controls(PlatformApp* app)
   static const OverlayToggleId k_toggle_ids[] = {
     OVERLAY_TOGGLE_GOD_MODE,
     OVERLAY_TOGGLE_FREEZE_TIME,
+    OVERLAY_TOGGLE_SOUND,
     OVERLAY_TOGGLE_CLOUDS
   };
   static const OverlaySliderId k_slider_ids[] = {
@@ -881,6 +886,9 @@ static void platform_sync_native_settings_controls(PlatformApp* app)
         break;
       case OVERLAY_TOGGLE_FREEZE_TIME:
         [toggle setState:(app->overlay.freeze_time_enabled != 0) ? NSControlStateValueOn : NSControlStateValueOff];
+        break;
+      case OVERLAY_TOGGLE_SOUND:
+        [toggle setState:(app->overlay.sound_enabled != 0) ? NSControlStateValueOn : NSControlStateValueOff];
         break;
       case OVERLAY_TOGGLE_CLOUDS:
         [toggle setState:(app->overlay.settings.clouds_enabled != 0) ? NSControlStateValueOn : NSControlStateValueOff];

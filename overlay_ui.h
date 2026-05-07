@@ -34,6 +34,7 @@ typedef enum OverlayToggleId
   OVERLAY_TOGGLE_NONE = -1,
   OVERLAY_TOGGLE_GOD_MODE = 0,
   OVERLAY_TOGGLE_FREEZE_TIME,
+  OVERLAY_TOGGLE_SOUND,
   OVERLAY_TOGGLE_CLOUDS,
   OVERLAY_TOGGLE_COUNT
 } OverlayToggleId;
@@ -55,6 +56,7 @@ typedef struct OverlayState
   int hot_gpu_preference;
   int god_mode_enabled;
   int freeze_time_enabled;
+  int sound_enabled;
   float ui_time_seconds;
   float scroll_offset;
   float scroll_max;
@@ -179,7 +181,7 @@ static inline int overlay_has_metric_card_before_slider(OverlaySliderId slider_i
 
 static inline int overlay_get_gameplay_toggle_block_height(void)
 {
-  return (OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING + OVERLAY_UI_CHECKBOX_HEIGHT + OVERLAY_UI_SECTION_SPACING) * 2;
+  return (OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING + OVERLAY_UI_CHECKBOX_HEIGHT + OVERLAY_UI_SECTION_SPACING) * 3;
 }
 
 static inline int overlay_get_cloud_toggle_block_height(void)
@@ -652,6 +654,8 @@ static inline const char* overlay_get_toggle_title(OverlayToggleId toggle_id)
       return "God mode (no physics)";
     case OVERLAY_TOGGLE_FREEZE_TIME:
       return "Freeze time and clouds";
+    case OVERLAY_TOGGLE_SOUND:
+      return "Game music and effects";
     case OVERLAY_TOGGLE_CLOUDS:
       return "Raymarched clouds";
     case OVERLAY_TOGGLE_NONE:

@@ -262,6 +262,18 @@ static int platform_get_overlay_toggle_rect(const PlatformApp* app, OverlayToggl
         return 1;
       }
       y = b + OVERLAY_UI_SECTION_SPACING;
+
+      t = y + OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING;
+      b = t + OVERLAY_UI_CHECKBOX_HEIGHT;
+      if (toggle_id == OVERLAY_TOGGLE_SOUND)
+      {
+        if (out_left != NULL) { *out_left = OVERLAY_UI_MARGIN; }
+        if (out_top != NULL) { *out_top = t; }
+        if (out_right != NULL) { *out_right = panel_width - OVERLAY_UI_MARGIN; }
+        if (out_bottom != NULL) { *out_bottom = b; }
+        return 1;
+      }
+      y = b + OVERLAY_UI_SECTION_SPACING;
     }
 
     if (overlay_has_cloud_toggle_before_slider((OverlaySliderId)index))
@@ -328,6 +340,11 @@ static OverlayToggleId platform_get_hovered_toggle(const PlatformApp* app, int x
   {
     return OVERLAY_TOGGLE_FREEZE_TIME;
   }
+  if (platform_get_overlay_toggle_rect(app, OVERLAY_TOGGLE_SOUND, &l, &t, &r, &b) &&
+    x >= l && x <= r && y >= t && y <= b)
+  {
+    return OVERLAY_TOGGLE_SOUND;
+  }
   if (platform_get_overlay_toggle_rect(app, OVERLAY_TOGGLE_CLOUDS, &l, &t, &r, &b) &&
     x >= l && x <= r && y >= t && y <= b)
   {
@@ -391,6 +408,9 @@ static void platform_toggle_value(PlatformApp* app, OverlayToggleId toggle_id)
       break;
     case OVERLAY_TOGGLE_FREEZE_TIME:
       app->overlay.freeze_time_enabled = (app->overlay.freeze_time_enabled == 0);
+      break;
+    case OVERLAY_TOGGLE_SOUND:
+      app->overlay.sound_enabled = (app->overlay.sound_enabled == 0);
       break;
     case OVERLAY_TOGGLE_CLOUDS:
       app->overlay.settings.clouds_enabled = (app->overlay.settings.clouds_enabled == 0);

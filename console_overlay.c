@@ -200,6 +200,7 @@ void console_overlay_render(ConsoleOverlay* overlay, int width, int height, cons
     .hot_gpu_preference = -1,
     .god_mode_enabled = 0,
     .freeze_time_enabled = 0,
+    .sound_enabled = 1,
     .ui_time_seconds = 0.0f,
     .scroll_offset = 0.0f,
     .scroll_max = 0.0f
@@ -543,6 +544,79 @@ void console_overlay_render(ConsoleOverlay* overlay, int width, int height, cons
         0.70f,
         0.78f,
         overlay_get_toggle_title(OVERLAY_TOGGLE_FREEZE_TIME)
+      );
+    }
+  }
+
+  {
+    float toggle_left = 0.0f;
+    float toggle_top = 0.0f;
+    float toggle_right = 0.0f;
+    float toggle_bottom = 0.0f;
+    const int enabled = active_overlay->sound_enabled != 0;
+    const int hot = active_overlay->hot_toggle == OVERLAY_TOGGLE_SOUND;
+    const float box_left = (float)OVERLAY_UI_MARGIN;
+    float box_top = 0.0f;
+    const float pulse = enabled ? (0.82f + 0.18f * (0.5f + 0.5f * sinf(active_overlay->ui_time_seconds * 3.8f))) : 1.0f;
+
+    if (console_overlay_get_toggle_rect(active_overlay, OVERLAY_TOGGLE_SOUND, &toggle_left, &toggle_top, &toggle_right, &toggle_bottom))
+    {
+      box_top = toggle_top + (float)((OVERLAY_UI_CHECKBOX_HEIGHT - OVERLAY_UI_CHECKBOX_SIZE) / 2);
+      console_overlay_draw_text(overlay, toggle_left, toggle_top - 8.0f, 0.86f, 0.88f, 0.92f, "Audio output");
+      if (enabled || hot)
+      {
+        console_overlay_draw_rect(
+          box_left - 3.0f,
+          box_top - 3.0f,
+          box_left + (float)OVERLAY_UI_CHECKBOX_SIZE + 3.0f,
+          box_top + (float)OVERLAY_UI_CHECKBOX_SIZE + 3.0f,
+          0.16f * pulse,
+          0.34f * pulse,
+          0.44f * pulse,
+          hot ? 0.30f : 0.18f
+        );
+      }
+      console_overlay_draw_rect(box_left, box_top, box_left + (float)OVERLAY_UI_CHECKBOX_SIZE, box_top + (float)OVERLAY_UI_CHECKBOX_SIZE, 0.10f, 0.11f, 0.14f, 0.96f);
+      console_overlay_draw_outline(
+        box_left,
+        box_top,
+        box_left + (float)OVERLAY_UI_CHECKBOX_SIZE,
+        box_top + (float)OVERLAY_UI_CHECKBOX_SIZE,
+        hot ? 0.56f : 0.24f * pulse,
+        hot ? 0.88f : 0.28f * pulse,
+        hot ? 0.98f : 0.34f * pulse,
+        1.0f
+      );
+      if (enabled)
+      {
+        console_overlay_draw_rect(
+          box_left + 3.0f,
+          box_top + 3.0f,
+          box_left + (float)OVERLAY_UI_CHECKBOX_SIZE - 3.0f,
+          box_top + (float)OVERLAY_UI_CHECKBOX_SIZE - 3.0f,
+          0.44f * pulse,
+          0.86f * pulse,
+          0.96f * pulse,
+          1.0f
+        );
+      }
+      console_overlay_draw_text(
+        overlay,
+        box_left + (float)OVERLAY_UI_CHECKBOX_SIZE + 10.0f,
+        toggle_top + 15.0f,
+        enabled ? 0.74f * pulse : 0.84f,
+        enabled ? 0.94f * pulse : 0.78f,
+        enabled ? 0.98f * pulse : 0.84f,
+        enabled ? "Unmuted" : "Muted   "
+      );
+      console_overlay_draw_text(
+        overlay,
+        box_left + (float)OVERLAY_UI_CHECKBOX_SIZE + 76.0f,
+        toggle_top + 15.0f,
+        0.64f,
+        0.70f,
+        0.78f,
+        overlay_get_toggle_title(OVERLAY_TOGGLE_SOUND)
       );
     }
   }
@@ -1721,6 +1795,29 @@ static int console_overlay_get_toggle_rect(const OverlayState* overlay, OverlayT
       y += (float)(OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING + OVERLAY_UI_CHECKBOX_HEIGHT + OVERLAY_UI_SECTION_SPACING);
 
       if (toggle_id == OVERLAY_TOGGLE_FREEZE_TIME)
+      {
+        if (out_left != NULL)
+        {
+          *out_left = (float)OVERLAY_UI_MARGIN;
+        }
+        if (out_top != NULL)
+        {
+          *out_top = y + (float)(OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING);
+        }
+        if (out_right != NULL)
+        {
+          *out_right = (float)(overlay->panel_width - OVERLAY_UI_MARGIN);
+        }
+        if (out_bottom != NULL)
+        {
+          *out_bottom = y + (float)(OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING + OVERLAY_UI_CHECKBOX_HEIGHT);
+        }
+        return 1;
+      }
+
+      y += (float)(OVERLAY_UI_LABEL_HEIGHT + OVERLAY_UI_ITEM_SPACING + OVERLAY_UI_CHECKBOX_HEIGHT + OVERLAY_UI_SECTION_SPACING);
+
+      if (toggle_id == OVERLAY_TOGGLE_SOUND)
       {
         if (out_left != NULL)
         {
