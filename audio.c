@@ -346,7 +346,8 @@ static int audio_resolve_audio_directory(char* out_path, size_t out_path_size)
     "res/audio/",
     "../res/audio/",
     "../../res/audio/",
-    "../../../res/audio/"
+    "../../../res/audio/",
+    "../Resources/res/audio/"
   };
   size_t i = 0U;
 

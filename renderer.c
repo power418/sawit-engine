@@ -821,14 +821,16 @@ static int renderer_build_shader_path(const char* relative_path, char* out_path,
   static const char* k_shader_prefix = "shaders/";
   static const char* k_shader_fallbacks[] = {
     "shaders/",
-      "../shaders/",
-      "../../shaders/",
-      "../../../shaders/"
+    "../shaders/",
+    "../../shaders/",
+    "../../../shaders/",
+    "../Resources/shaders/"
     };
   size_t i = 0U;
 
   if (!platform_support_get_executable_path(module_path, sizeof(module_path)))
   {
+    diagnostics_log("renderer_build_shader_path: failed to get executable path");
     renderer_show_error("Path Error", "Failed to resolve the executable directory for shader loading.");
     return 0;
   }
@@ -836,6 +838,7 @@ static int renderer_build_shader_path(const char* relative_path, char* out_path,
   last_separator = (char*)renderer_find_last_path_separator(module_path);
   if (last_separator == NULL)
   {
+    diagnostics_logf("renderer_build_shader_path: failed to find separator in path '%s'", module_path);
     renderer_show_error("Path Error", "Failed to resolve the executable directory separator for shader loading.");
     return 0;
   }
@@ -846,6 +849,7 @@ static int renderer_build_shader_path(const char* relative_path, char* out_path,
     (void)snprintf(candidate_path, sizeof(candidate_path), "%s%s", module_path, relative_path);
     if (renderer_file_exists(candidate_path))
     {
+      diagnostics_logf("renderer_build_shader_path: resolved via module path: %s", candidate_path);
       (void)snprintf(out_path, out_path_size, "%s", candidate_path);
       return 1;
     }
@@ -859,6 +863,7 @@ static int renderer_build_shader_path(const char* relative_path, char* out_path,
       (void)snprintf(candidate_path, sizeof(candidate_path), "%s/%s", current_directory, relative_path);
       if (renderer_file_exists(candidate_path))
       {
+        diagnostics_logf("renderer_build_shader_path: resolved via current dir: %s", candidate_path);
         (void)snprintf(out_path, out_path_size, "%s", candidate_path);
         return 1;
       }
@@ -881,6 +886,7 @@ static int renderer_build_shader_path(const char* relative_path, char* out_path,
       if (renderer_build_relative_path(module_path, fallback_relative, candidate_path, sizeof(candidate_path)) &&
         renderer_file_exists(candidate_path))
       {
+        diagnostics_logf("renderer_build_shader_path: resolved via fallback: %s", candidate_path);
         (void)snprintf(out_path, out_path_size, "%s", candidate_path);
         return 1;
       }

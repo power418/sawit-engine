@@ -133,5 +133,7 @@ void platform_support_show_error_dialog(const char* title, const char* message)
   (void)MessageBoxA(NULL, safe_message, safe_title, MB_ICONERROR | MB_OK);
 #else
   (void)fprintf(stderr, "%s: %s\n", safe_title, safe_message);
+  (void)fprintf(stdout, "%s: %s\n", safe_title, safe_message);
+  (void)fflush(stdout);
 #endif
 }
