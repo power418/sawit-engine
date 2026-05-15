@@ -67,6 +67,13 @@ typedef struct OverlayMetrics
   int gpu_temperature_available;
   int health_status;
   int active_gpu_task_manager_index;
+  int net_enabled;
+  int net_connected;
+  int net_control_joined;
+  int net_remote_player_count;
+  unsigned long long net_player_id;
+  unsigned int net_snapshot_tick;
+  float net_ping_ms;
   char gpu0_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];
   char gpu1_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];
   char active_gpu_name[OVERLAY_METRICS_ACTIVE_GPU_NAME_LENGTH];

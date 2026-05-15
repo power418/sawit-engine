@@ -36,6 +36,7 @@ PROJECT_SOURCES := \
   keymap.c \
   main.c \
   math3d.c \
+  multiplayer_render.c \
   palm_render.c \
   platform_support.c \
   platform_win32.c \
@@ -43,6 +44,7 @@ PROJECT_SOURCES := \
   procedural_lod.c \
   render_quality.c \
   renderer.c \
+  service_api.c \
   stats_overlay.c \
   system_monitor.c \
   terrain.c \
@@ -61,6 +63,7 @@ PROJECT_OBJECTS := \
   $(OBJ_DIR)/keymap.obj \
   $(OBJ_DIR)/main.obj \
   $(OBJ_DIR)/math3d.obj \
+  $(OBJ_DIR)/multiplayer_render.obj \
   $(OBJ_DIR)/palm_render.obj \
   $(OBJ_DIR)/platform_support.obj \
   $(OBJ_DIR)/platform_win32.obj \
@@ -68,6 +71,7 @@ PROJECT_OBJECTS := \
   $(OBJ_DIR)/procedural_lod.obj \
   $(OBJ_DIR)/render_quality.obj \
   $(OBJ_DIR)/renderer.obj \
+  $(OBJ_DIR)/service_api.obj \
   $(OBJ_DIR)/stats_overlay.obj \
   $(OBJ_DIR)/system_monitor.obj \
   $(OBJ_DIR)/terrain.obj \
@@ -92,7 +96,7 @@ COMMON_CFLAGS := -std=c11 $(WARNINGS)
 GLEW_CFLAGS := -fno-builtin -fno-stack-protector
 DEPFLAGS := -MMD -MP
 LDFLAGS := -mwindows
-LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lmfplat -lmfreadwrite -lmfuuid -lole32 -loleaut32 -lpdh -luser32 -ladvapi32 -lwbemuuid -lwinmm
+LDLIBS := -lopengl32 -ldxgi -ldxguid -lgdi32 -lmfplat -lmfreadwrite -lmfuuid -lole32 -loleaut32 -lpdh -luser32 -ladvapi32 -lwbemuuid -lwinmm -lws2_32
 
 ifeq ($(CONFIG),Debug)
 CONFIG_CFLAGS := -O0 -g

@@ -85,6 +85,50 @@ Catatan: terdapat perintah post-build yang menyalin folder `shaders` dan `res` k
 
 ---
 
+**Multiplayer dengan Sawit Service**
+
+Jalankan realtime server dari repo `sawit-service`:
+
+```powershell
+cd ..\sawit-service
+cargo run --bin sawit-service -- 0.0.0.0:4000
+```
+
+Lalu jalankan satu atau dua instance engine. Secara default engine akan connect ke `127.0.0.1:4000`, join room `1`, mengirim input player, menerima snapshot server, dan menggambar remote player sebagai wire box cyan dengan garis arah kuning.
+
+Versi multiplayer terbaru memakai dua tahap:
+
+1. Engine mengirim `JOIN <room_id> <name>` ke TCP control plane `127.0.0.1:4001`.
+2. Response `JOIN_OK` memberi `udp_addr`, lalu engine connect ke UDP realtime server tersebut.
+
+Kalau TCP control plane belum tersedia, engine fallback ke UDP address lama dari `SAWIT_SERVICE_ADDR`.
+
+Env opsional sebelum menjalankan engine:
+
+```powershell
+$env:SAWIT_CONTROL_ADDR="127.0.0.1:4001"
+$env:SAWIT_SERVICE_ADDR="127.0.0.1:4000"
+$env:SAWIT_ROOM_ID="1"
+$env:SAWIT_PLAYER_NAME="alice"
+$env:SAWIT_MULTIPLAYER="1"
+```
+
+Untuk skip TCP control plane dan langsung pakai UDP:
+
+```powershell
+$env:SAWIT_CONTROL_ADDR="off"
+```
+
+Untuk mematikan network client:
+
+```powershell
+$env:SAWIT_MULTIPLAYER="0"
+```
+
+HUD menampilkan status ringkas: `NET JOIN/TCP` saat sudah discovery via TCP tapi belum welcome UDP, `NET ON/TCP` saat terhubung, `NET ON/UDP` saat fallback direct UDP, `P<id>` untuk local `PlayerId`, `R<n>` untuk jumlah remote player, dan ping terakhir dalam ms.
+
+---
+
 **Dependensi & catatan teknis**
 
 - `stb_image.h` — sudah tersedia di repository (header-only). Pastikan salah satu C/CPP file memiliki definisi `#define STB_IMAGE_IMPLEMENTATION` jika diperlukan untuk build lokal.

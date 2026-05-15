@@ -10,6 +10,7 @@
 #include "platform_support.h"
 #include "renderer.h"
 #include "scene_settings.h"
+#include "service_api.h"
 #include "system_monitor.h"
 #include "terrain.h"
 
@@ -27,6 +28,7 @@ typedef struct AppState
   PlatformApp platform;
   Renderer renderer;
   PlayerController player;
+  SawitServiceClient service_client;
   BlockWorld block_world;
   AtmosphereState atmosphere;
   DayCycleState day_cycle;

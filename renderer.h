@@ -14,6 +14,8 @@
 #include "stats_overlay.h"
 #include "tree_render.h"
 
+typedef struct SawitServiceClient SawitServiceClient;
+
 typedef struct Renderer
 {
   GLuint sky_vao;
@@ -107,7 +109,8 @@ void renderer_render(
   const AtmosphereState* atmosphere,
   const SceneSettings* settings,
   const OverlayState* overlay,
-  const BlockWorld* block_world
+  const BlockWorld* block_world,
+  const SawitServiceClient* service_client
 );
 void renderer_sync_terrain_render_sampling(const Renderer* renderer, const CameraState* camera);
 float renderer_get_terrain_height(float x, float z, const SceneSettings* settings);

@@ -175,7 +175,7 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
       : ((active_overlay->metrics.thermal_zone_temperature_available != 0) ? "ZONE" : "N/A");
   const char* health_label = "UNKNOWN";
   const float hud_width = 308.0f;
-  const float hud_height = 418.0f;
+  const float hud_height = 432.0f;
   const float hud_margin = 12.0f;
   const float hud_left = (float)width - hud_width - hud_margin;
   const float hud_top = 12.0f;
@@ -412,6 +412,24 @@ void stats_overlay_render(StatsOverlay* overlay, int width, int height, const Ov
   stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 406.0f, health_r, health_g, health_b, 0.96f, line_buffer);
   (void)snprintf(line_buffer, sizeof(line_buffer), "MODE %s", mode_label);
   stats_overlay_draw_text(overlay->small_font_base, info_right, hud_top + 406.0f, 0.78f, 0.82f, 0.88f, 0.94f, line_buffer);
+
+  if (active_overlay->metrics.net_enabled != 0)
+  {
+    (void)snprintf(
+      line_buffer,
+      sizeof(line_buffer),
+      "NET %s/%s P%llu R%d %.0fms",
+      active_overlay->metrics.net_connected != 0 ? "ON" : "JOIN",
+      active_overlay->metrics.net_control_joined != 0 ? "TCP" : "UDP",
+      active_overlay->metrics.net_player_id,
+      active_overlay->metrics.net_remote_player_count,
+      active_overlay->metrics.net_ping_ms);
+  }
+  else
+  {
+    (void)snprintf(line_buffer, sizeof(line_buffer), "NET OFF");
+  }
+  stats_overlay_draw_text(overlay->small_font_base, info_left, hud_top + 420.0f, 0.58f, 0.92f, 1.0f, 0.94f, line_buffer);
 
   stats_overlay_draw_debug_console(overlay, width, height, active_overlay);
 

@@ -4,6 +4,7 @@
 #include "diagnostics.h"
 #include "grass_render.h"
 #include "math3d.h"
+#include "multiplayer_render.h"
 #include "mountain_render.h"
 #include "palm_render.h"
 #include "platform_support.h"
@@ -403,7 +404,8 @@ void renderer_render(
   const AtmosphereState* atmosphere,
   const SceneSettings* settings,
   const OverlayState* overlay,
-  const BlockWorld* block_world
+  const BlockWorld* block_world,
+  const SawitServiceClient* service_client
 )
 {
   const SceneSettings fallback_settings = scene_settings_default();
@@ -686,6 +688,7 @@ void renderer_render(
   grass_render_draw(&renderer->grass_mesh);
   glEnable(GL_CULL_FACE);
   block_render_draw_world(renderer->framebuffer_width, renderer->framebuffer_height, camera, atmosphere, active_settings, block_world);
+  multiplayer_render_draw_players(renderer->framebuffer_width, renderer->framebuffer_height, camera, active_settings, service_client);
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glViewport(0, 0, renderer->width, renderer->height);

@@ -357,12 +357,14 @@ else()
     math3d.c
     main.c
     mountain_render.c
+    multiplayer_render.c
     palm_render.c
     platform_support.c
     player_controller.c
     procedural_lod.c
     render_quality.c
     renderer.c
+    service_api.c
     stats_overlay.c
     system_monitor.c
     terrain.c
@@ -449,6 +451,7 @@ else()
         user32
         wbemuuid
         winmm
+        ws2_32
     )
   elseif("${OPENGL_SKY_PLATFORM_OS}" STREQUAL "Darwin")
     find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)

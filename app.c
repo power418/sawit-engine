@@ -53,6 +53,7 @@ int app_run(void)
     return 1;
   }
 
+  sawit_service_client_init(&app.service_client);
   app.platform.overlay.sound_enabled = 1;
 
   app_apply_renderer_quality_defaults(&app);
@@ -188,6 +189,11 @@ int app_run(void)
 
     player_controller_apply_look(&app.player, &input);
     player_controller_update(&app.player, &input, delta_seconds, &app.block_world, &app.scene_settings);
+    sawit_service_client_update(&app.service_client, &app.player, &input, delta_seconds);
+    if (sawit_service_client_apply_authority(&app.service_client, &app.player) != 0)
+    {
+      player_controller_sync_to_world(&app.player, &app.block_world, &app.scene_settings);
+    }
     renderer_sync_terrain_render_sampling(&app.renderer, &app.player.camera);
 
     app.day_cycle.cycles_per_second = 1.0f / app.scene_settings.cycle_duration_seconds;
@@ -262,6 +268,13 @@ int app_run(void)
       app.stats_display_metrics.selected_block_type = (int)app.player.selected_block;
       app.stats_display_metrics.placed_block_count = block_world_get_cell_count(&app.block_world);
       app.stats_display_metrics.target_active = (target != NULL && target->valid != 0);
+      app.stats_display_metrics.net_enabled = app.service_client.enabled;
+      app.stats_display_metrics.net_connected = app.service_client.connected;
+      app.stats_display_metrics.net_control_joined = app.service_client.control_plane_joined;
+      app.stats_display_metrics.net_remote_player_count = app.service_client.remote_player_count;
+      app.stats_display_metrics.net_player_id = app.service_client.player_id;
+      app.stats_display_metrics.net_snapshot_tick = app.service_client.last_snapshot_tick;
+      app.stats_display_metrics.net_ping_ms = (float)app.service_client.last_pong_rtt_ms;
       app_update_runtime_telemetry(&app);
 
       metrics = app.stats_display_metrics;
@@ -290,7 +303,8 @@ int app_run(void)
       &app.atmosphere,
       &app.scene_settings,
       &app.platform.overlay,
-      &app.block_world);
+      &app.block_world,
+      &app.service_client);
     platform_swap_buffers(&app.platform);
     if (app.platform.overlay.sound_enabled)
     {
@@ -317,6 +331,7 @@ int app_run(void)
     }
   }
 
+  sawit_service_client_shutdown(&app.service_client);
   audio_shutdown(&music_audio);
   system_monitor_destroy(&app.system_monitor);
   renderer_destroy(&app.renderer);
